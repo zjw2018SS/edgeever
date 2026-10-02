@@ -27,6 +27,11 @@ files:
   - src/**
   - package.json
 extraResources:
+  - from: ../../scripts
+    to: mcp-bridge
+    filter:
+      - edgeever-mcp-stdio.mjs
+      - mcp-http-headers.mjs
   - from: ../web/dist
     to: web
     filter:
@@ -54,6 +59,13 @@ mac:
   category: public.app-category.productivity
   icon: assets/icon.icns
   minimumSystemVersion: "13.0"
+  # PlugIns are skipped by the default signer, and afterSign runs too late to notarize.
+  sign: ./scripts/sign-share-extension.cjs
+  extraFiles:
+    - from: share-extension/dist/EdgeEverShare.appex
+      to: PlugIns/EdgeEverShare.appex
+  extendInfo:
+    NSScreenCaptureUsageDescription: "EdgeEver captures a screenshot and saves it as a note."
   target:
     - target: dmg
     - target: zip
@@ -72,9 +84,10 @@ win:
 nsis:
   oneClick: true
   perMachine: false
+  include: nsis/installer.nsh
 linux:
   category: Utility
   syncDesktopName: true
   target:
     - AppImage
-  artifactName: EdgeEver-${version}-linux-${arch}.${ext}
+  artifactName: EdgeEver-${version}-linux-x64.${ext}

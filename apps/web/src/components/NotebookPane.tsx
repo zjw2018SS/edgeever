@@ -5,15 +5,21 @@ import * as m from "motion/react-m";
 import {
   ChevronLeft,
   ChevronDown,
+  ChevronsLeft,
+  ChevronsRight,
   Plus,
+  LayoutGrid,
   LayoutList,
   LayoutTemplate,
+  GitFork,
+  Component,
+  PieChart,
+  Table2,
   BookPlus,
-  Boxes,
   ArrowDownWideNarrow,
   Notebook as NotebookIcon,
-  Tags,
-  Archive,
+  Tag,
+  Paperclip,
   Trash2,
   KeyRound,
   LogOut,
@@ -26,11 +32,9 @@ import {
   ExternalLink,
   RotateCcw,
   FileText,
-  Network,
   Workflow,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
-import { Badge } from "@/components/ui/badge";
 import { Switch } from "@/components/ui/switch";
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from "@/components/ui/tooltip";
 import {
@@ -45,7 +49,9 @@ import {
 } from "@/components/ui/dropdown-menu";
 import { NotebookTreeItem } from "./NotebookTreeItem";
 import { cn } from "@/lib/utils";
-import type { Notebook, AuthUser, DiagramKind } from "@edgeever/shared";
+import { useShowDescendantNotesPreference } from "@/lib/descendant-notes-preference";
+import { BETA_BADGE_CLASSNAME } from "@/lib/workspace-ui";
+import type { Notebook, AuthUser, NoteCreateKind } from "@edgeever/shared";
 import type { NotebookNode, NotebookDropPosition, NotebookSortMode } from "@/lib/app-helpers";
 import type { SyncQueueSummary } from "@/lib/sync-queue";
 import {
@@ -53,17 +59,21 @@ import {
   getNotebookSortOptions,
   getNotebookSortComparator,
   hasEdgeEverDragData,
+  readNotebookTreeCollapsedIdsPreference,
   readNotebookSortPreference,
+  writeNotebookTreeCollapsedIdsPreference,
   writeNotebookSortPreference,
 } from "@/lib/app-helpers";
 import type { EdgeEverRepository } from "@/lib/repository";
 import type { EdgeEverPluginHost } from "@/lib/plugins/plugin-host";
 import { statusSettleMotion } from "@/lib/motion";
 import { DesktopUpdateNotice } from "./DesktopUpdateNotice";
+import { useDeployedUpdateNotice } from "@/hooks/useDeployedUpdateNotice";
 import { PluginToolbarMenu } from "./plugins/PluginToolbarMenu";
 
 const DesktopSyncIssuesDialog = lazy(() => import("./DesktopSyncIssuesDialog").then((module) => ({ default: module.DesktopSyncIssuesDialog })));
 
+const NOTEBOOK_SIDEBAR_ID = "edgeever-notebook-sidebar";
 const NOTEBOOK_DRAG_SCROLL_EDGE_PX = 56;
 const NOTEBOOK_DRAG_SCROLL_MAX_STEP_PX = 18;
 const DESKTOP_DOWNLOAD_URL = "https://github.com/tianma-if/edgeever/releases/latest";
@@ -76,7 +86,7 @@ const FIREFOX_CLIPPER_URL = "https://addons.mozilla.org/firefox/addon/edgeever-w
 const BrandIconContainer = ({ children, className }: { children: ReactNode; className?: string }) => (
   <span
     className={cn(
-      "flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-700 dark:bg-slate-800 dark:text-slate-300",
+      "flex h-6 w-6 shrink-0 items-center justify-center rounded-md bg-slate-100 text-slate-700  ",
       className
     )}
   >
@@ -84,19 +94,15 @@ const BrandIconContainer = ({ children, className }: { children: ReactNode; clas
   </span>
 );
 
-const BrandIcon = ({ path, color, className }: { path: string; color: string; className?: string }) => (
-  <svg className={cn("h-3.5 w-3.5 shrink-0", className)} viewBox="0 0 24 24" aria-hidden="true" style={{ color }}>
+const BrandIcon = ({ path, color, className }: { path: string; color?: string; className?: string }) => (
+  <svg
+    className={cn("h-3.5 w-3.5 shrink-0", className)}
+    viewBox="0 0 24 24"
+    aria-hidden="true"
+    style={color ? { color } : undefined}
+  >
     <path fill="currentColor" d={path} />
   </svg>
-);
-
-const DiagramBetaBadge = () => (
-  <Badge
-    variant="outline"
-    className="ml-auto border-emerald-200/80 bg-emerald-50 px-1.5 py-0 text-[10px] leading-4 tracking-wide text-emerald-700 dark:border-emerald-800/60 dark:bg-emerald-950/50 dark:text-emerald-300"
-  >
-    Beta
-  </Badge>
 );
 
 const AppStoreIcon = () => (
@@ -115,6 +121,7 @@ const GooglePlayIcon = () => (
 );
 
 const APPLE_ICON_PATH = "M12.152 6.896c-.948 0-2.415-1.078-3.96-1.04c-2.04.027-3.91 1.183-4.961 3.014c-2.117 3.675-.546 9.103 1.519 12.09c1.013 1.454 2.208 3.09 3.792 3.039c1.52-.065 2.09-.987 3.935-.987c1.831 0 2.35.987 3.96.948c1.637-.026 2.676-1.48 3.676-2.948c1.156-1.688 1.636-3.325 1.662-3.415c-.039-.013-3.182-1.221-3.22-4.857c-.026-3.04 2.48-4.494 2.597-4.559c-1.429-2.09-3.623-2.324-4.39-2.376c-2-.156-3.675 1.09-4.61 1.09zM15.53 3.83c.843-1.012 1.4-2.427 1.245-3.83c-1.207.052-2.662.805-3.532 1.818c-.78.896-1.454 2.338-1.273 3.714c1.338.104 2.715-.688 3.559-1.701";
+const LINUX_ICON_PATH = "M19 16c0 1.72-.63 3.3-1.66 4.5c.41.39.66.91.66 1.5H6c0-.59.25-1.11.66-1.5A6.9 6.9 0 0 1 5 16H3c0-1.25.57-2.36 1.46-3.09l.01-.02A6 6 0 0 0 7 8V7a5 5 0 0 1 5-5a5 5 0 0 1 5 5v1c0 2 1 3.81 2.53 4.89l.01.02c.89.73 1.46 1.84 1.46 3.09zm-3 0a4 4 0 0 0-4-4a4 4 0 0 0-4 4a4 4 0 0 0 4 4a4 4 0 0 0 4-4m-6-7l2 1.5L14 9l-2-1.5zm0-4a1 1 0 0 0-1 1a1 1 0 0 0 1 1a1 1 0 0 0 1-1a1 1 0 0 0-1-1m4 0a1 1 0 0 0-1 1a1 1 0 0 0 1 1a1 1 0 0 0 1-1a1 1 0 0 0-1-1";
 const WINDOWS_ICON_PATH = "M0 0h11.377v11.372H0Zm12.623 0H24v11.372H12.623ZM0 12.623h11.377V24H0Zm12.623 0H24V24H12.623";
 const CHROME_ICON_PATH = "M12 0C8.21 0 4.831 1.757 2.632 4.501l3.953 6.848A5.454 5.454 0 0 1 12 6.545h10.691A12 12 0 0 0 12 0M1.931 5.47A11.94 11.94 0 0 0 0 12c0 6.012 4.42 10.991 10.189 11.864l3.953-6.847a5.45 5.45 0 0 1-6.865-2.29zm13.342 2.166a5.446 5.446 0 0 1 1.45 7.09l.002.001h-.002l-5.344 9.257q.309.015.621.016c6.627 0 12-5.373 12-12c0-1.54-.29-3.011-.818-4.364zM12 16.364a4.364 4.364 0 1 1 0-8.728a4.364 4.364 0 0 1 0 8.728";
 const EDGE_ICON_PATH = "M21.86 17.86q.14 0 .25.12q.1.13.1.25t-.11.33l-.32.46l-.43.53l-.44.5q-.21.25-.38.42l-.22.23q-.58.53-1.34 1.04t-1.6.91q-.86.4-1.74.64t-1.67.24q-.9 0-1.69-.28q-.8-.28-1.48-.78T9.57 21.3q-.53-.66-.92-1.44q-.38-.77-.58-1.6t-.2-1.67q0-1 .32-1.96q.33-.97.87-1.8q.14.95.55 1.77t1.02 1.5q.6.68 1.38 1.21q.78.54 1.64.9t1.77.56q.92.2 1.8.2q1.12 0 2.18-.24q1.06-.23 2.06-.72l.2-.1zm-15.5-1.27q0 1.1.27 2.15q.27 1.06.78 2.03q.51.96 1.24 1.77q.74.82 1.66 1.4q-1.47-.2-2.8-.74q-1.33-.55-2.48-1.37q-1.15-.83-2.08-1.9q-.92-1.07-1.58-2.33T.36 14.94Q0 13.54 0 12.06q0-.81.32-1.49q.31-.68.83-1.23q.53-.55 1.2-.96q.66-.4 1.35-.66q.74-.27 1.5-.39q.78-.12 1.55-.12q.7 0 1.42.1q.72.12 1.4.35t1.32.57q.63.35 1.16.83q-.35 0-.7.07q-.33.07-.65.23v-.02q-.63.28-1.2.74t-1.05 1.04t-.87 1.26q-.38.67-.65 1.39q-.27.71-.42 1.44q-.15.72-.15 1.38M11.96.06q1.7 0 3.33.39q1.63.38 3.07 1.15q1.43.77 2.62 1.93q1.18 1.16 1.98 2.7q.49.94.76 1.96q.28 1 .28 2.08q0 .89-.23 1.7q-.24.8-.69 1.48t-1.1 1.22q-.64.53-1.45.88q-.54.24-1.11.36q-.58.13-1.16.13q-.42 0-.97-.03q-.54-.03-1.1-.12q-.55-.1-1.05-.28q-.5-.19-.84-.5q-.12-.09-.23-.24q-.1-.16-.1-.33q0-.15.16-.35t.35-.5q.2-.28.36-.68t.16-.95q0-1.06-.4-1.96q-.4-.91-1.06-1.64q-.66-.74-1.52-1.28q-.86-.55-1.79-.89q-.84-.3-1.72-.44q-.87-.14-1.76-.14q-1.55 0-3.06.45T.94 7.55q.71-1.74 1.81-3.13q1.1-1.38 2.52-2.35Q6.68 1.1 8.37.58q1.7-.52 3.58-.52Z";
@@ -135,7 +142,7 @@ const SidebarNavButton = ({
 }) => (
   <button
     className={cn(
-      "flex h-9 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium leading-none transition-all duration-200",
+      "flex h-9 w-full items-center gap-3 rounded-md px-3 text-left text-xs font-medium leading-none transition-all duration-200",
       tone === "warning"
         ? "text-amber-700 hover:bg-amber-50/70 hover:text-amber-800"
         : active
@@ -146,7 +153,7 @@ const SidebarNavButton = ({
     aria-current={active ? "page" : undefined}
     onClick={onClick}
   >
-    <span className={cn("flex h-4 w-4 shrink-0 items-center justify-center transition-colors duration-200", active && "text-emerald-600 dark:text-emerald-400")}>{icon}</span>
+    <span className="flex h-4 w-4 shrink-0 items-center justify-center transition-colors duration-200">{icon}</span>
     <span className="min-w-0 flex-1 truncate">{label}</span>
   </button>
 );
@@ -168,7 +175,7 @@ const SidebarShortcutButton = ({
     <button
       className={cn(
         "flex h-9 min-w-0 w-full items-center justify-center rounded-md px-0 text-xs font-medium transition-colors duration-200",
-        active ? "edgeever-workspace-selection text-emerald-600 dark:text-emerald-400" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"
+        active ? "edgeever-workspace-selection text-slate-950" : "text-slate-600 hover:bg-slate-50 hover:text-slate-950"
       )}
       type="button"
       aria-current={active ? "page" : undefined}
@@ -205,9 +212,9 @@ const SidebarTrashShortcut = ({
     <div className="group relative min-w-0">
       <SidebarShortcutButton active={active} icon={<Trash2 className="h-4 w-4" />} label={t("notebookPane.trash")} onClick={onOpenTrash} showTooltip={false} />
       {!active && (
-        <div className="pointer-events-none absolute right-0 top-full z-20 w-max pt-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100">
+        <div className="pointer-events-none absolute right-0 top-full z-20 w-max pt-1 opacity-0 transition-opacity duration-150 group-hover:pointer-events-auto group-hover:opacity-100 group-focus-within:pointer-events-auto group-focus-within:opacity-100">
           <button
-            className="relative flex h-8 items-center gap-1.5 rounded-md border border-rose-200 bg-white px-2 text-xs font-medium text-rose-700 shadow-lg shadow-slate-900/10 transition-colors before:absolute before:-top-1 before:right-16 before:h-2 before:w-2 before:rotate-45 before:border-l before:border-t before:border-rose-200 before:bg-white hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/70"
+            className="relative flex h-8 items-center gap-1.5 rounded-md border border-rose-200 bg-card px-2 text-xs font-medium text-rose-700 shadow-lg shadow-slate-900/10 transition-colors before:absolute before:-top-1 before:right-16 before:h-2 before:w-2 before:rotate-45 before:border-l before:border-t before:border-rose-200 before:bg-card hover:bg-rose-50 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-rose-400/70"
             type="button"
             onClick={onEmptyTrash}
           >
@@ -226,6 +233,115 @@ const SidebarSectionLabel = ({ icon, label }: { icon: ReactNode; label: string }
     <span className="min-w-0 flex-1 truncate">{label}</span>
   </div>
 );
+
+const SidebarCollapseButton = ({
+  collapsed,
+  onToggle,
+  className,
+  tooltipSide = "bottom",
+}: {
+  collapsed: boolean;
+  onToggle: () => void;
+  className?: string;
+  tooltipSide?: "top" | "right" | "bottom" | "left";
+}) => {
+  const { t } = useTranslation();
+  const label = t(collapsed ? "notebookPane.expandSidebar" : "notebookPane.collapseSidebar");
+
+  return (
+    <TooltipProvider delayDuration={0} skipDelayDuration={0}>
+      <Tooltip>
+        <TooltipTrigger asChild>
+          <button
+            type="button"
+            className={cn(
+              "flex h-8 w-8 items-center justify-center rounded-md text-slate-600 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900/20",
+              className
+            )}
+            aria-label={label}
+            aria-expanded={!collapsed}
+            aria-controls={NOTEBOOK_SIDEBAR_ID}
+            onClick={onToggle}
+          >
+            {collapsed ? <ChevronsRight className="h-4 w-4" aria-hidden="true" /> : <ChevronsLeft className="h-4 w-4" aria-hidden="true" />}
+          </button>
+        </TooltipTrigger>
+        <TooltipContent side={tooltipSide}>{label}</TooltipContent>
+      </Tooltip>
+    </TooltipProvider>
+  );
+};
+
+const SidebarRailButton = ({
+  active = false,
+  icon,
+  label,
+  notice = false,
+  onClick,
+  disabled = false,
+}: {
+  active?: boolean;
+  icon: ReactNode;
+  label: string;
+  notice?: boolean;
+  onClick: () => void;
+  disabled?: boolean;
+}) => (
+  <Tooltip>
+    <TooltipTrigger asChild>
+      <button
+        type="button"
+        disabled={disabled}
+        aria-current={active ? "page" : undefined}
+        aria-label={label}
+        onClick={onClick}
+        className={cn(
+          "relative flex h-9 w-9 items-center justify-center rounded-lg text-slate-600 transition-colors duration-150 hover:bg-slate-100 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900/20 disabled:cursor-not-allowed disabled:opacity-50",
+          active && "edgeever-workspace-selection text-slate-950"
+        )}
+      >
+        {icon}
+        {notice ? <span className="absolute right-1 top-1 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-[var(--workspace-sidebar)]" /> : null}
+      </button>
+    </TooltipTrigger>
+    <TooltipContent side="right">{label}</TooltipContent>
+  </Tooltip>
+);
+
+const CreateMemoTypeItems = ({ onCreateMemo }: { onCreateMemo: (kind?: NoteCreateKind) => void }) => {
+  const { t } = useTranslation();
+
+  return (
+    <>
+      <DropdownMenuItem className="gap-2 text-xs leading-5" onSelect={() => onCreateMemo()}>
+        <FileText className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{t("diagram.normalNote")}</span>
+      </DropdownMenuItem>
+      <DropdownMenuItem className="gap-2 text-xs leading-5" onSelect={() => onCreateMemo("mind-map")}>
+        <GitFork className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{t("diagram.mindMap")}</span>
+      </DropdownMenuItem>
+      <DropdownMenuItem className="gap-2 text-xs leading-5" onSelect={() => onCreateMemo("flowchart")}>
+        <Workflow className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{t("diagram.flowchart")}</span>
+      </DropdownMenuItem>
+      <DropdownMenuItem className="gap-2 text-xs leading-5" onSelect={() => onCreateMemo("architecture")}>
+        <Component className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{t("diagram.architecture")}</span>
+      </DropdownMenuItem>
+      <DropdownMenuItem className="gap-2 text-xs leading-5" onSelect={() => onCreateMemo("infographic")}>
+        <PieChart className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{t("infographic.name")}</span>
+        <span className={BETA_BADGE_CLASSNAME}>Beta</span>
+      </DropdownMenuItem>
+      <DropdownMenuItem className="gap-2 text-xs leading-5" onSelect={() => onCreateMemo("table")}>
+        <Table2 className="h-4 w-4 shrink-0" />
+        <span className="min-w-0 flex-1 truncate">{t("structuredTable.name")}</span>
+        <span className={BETA_BADGE_CLASSNAME}>Beta</span>
+      </DropdownMenuItem>
+    </>
+  );
+};
 
 const getSyncStatusLabel = (summary: SyncQueueSummary, isOnline: boolean, isSyncing: boolean, t: ReturnType<typeof useTranslation>["t"]) => {
   if (!isOnline) {
@@ -276,11 +392,11 @@ const SyncStatusBar = ({
       ? "border-amber-200 bg-amber-50 text-amber-800"
       : hasQueuedWork
         ? "border-slate-200 bg-slate-50 text-slate-700"
-        : "border-slate-200 bg-white text-slate-500";
+        : "border-slate-200 bg-card text-slate-500";
 
   return (
     <div
-      className={cn("mb-3 flex min-h-10 items-center gap-2 rounded-md border px-3 py-2 transition-all duration-200", statusClassName)}
+      className={cn("flex h-8 items-center gap-2 rounded-md border px-3 transition-all duration-200", statusClassName)}
       role="status"
       aria-live="polite"
     >
@@ -301,7 +417,7 @@ const SyncStatusBar = ({
         )}
       </m.span>
       <button
-        className="min-w-0 flex-1 truncate text-left text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+        className="min-w-0 flex-1 truncate text-left text-xs font-medium focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900/15"
         type="button"
         onClick={() => setDetailsOpen(true)}
       >
@@ -309,7 +425,7 @@ const SyncStatusBar = ({
       </button>
       {summary.conflict > 0 && (
         <button
-          className="shrink-0 rounded-md px-2 py-1 text-[11px] font-semibold text-amber-800 transition-colors hover:bg-white/70 disabled:opacity-50"
+          className="shrink-0 rounded-md px-2 py-0.5 text-xs font-semibold leading-none text-amber-800 transition-colors hover:bg-card/70 disabled:opacity-50"
           type="button"
           disabled={!isOnline || isSyncing}
           onClick={onDiscardConflicts}
@@ -322,7 +438,7 @@ const SyncStatusBar = ({
           <Tooltip>
             <TooltipTrigger asChild>
               <button
-                className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md hover:bg-white/70 disabled:opacity-50 transition-colors"
+                className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md hover:bg-card/70 disabled:opacity-50 transition-colors"
                 type="button"
                 aria-label={t("notebookPane.syncNow")}
                 disabled={!isOnline || isSyncing}
@@ -364,7 +480,6 @@ export const NotebookPane = ({
   onOpenTags,
   onOpenAssets,
   onOpenTemplates,
-  companionActive,
   pluginHost,
   onOpenPluginManager,
   onOpenTrash,
@@ -386,6 +501,8 @@ export const NotebookPane = ({
   demoMode = false,
   onResetDemo,
   isResettingDemo = false,
+  collapsed = false,
+  onToggleCollapsed,
 }: {
   repository: EdgeEverRepository;
   user: AuthUser | null;
@@ -401,13 +518,12 @@ export const NotebookPane = ({
   onOpenTags: () => void;
   onOpenAssets: () => void;
   onOpenTemplates: () => void;
-  companionActive: boolean;
   pluginHost: EdgeEverPluginHost;
   onOpenPluginManager: () => void;
   onOpenTrash: () => void;
   onEmptyTrash: () => void;
   onOpenSettings: () => void;
-  onCreateMemo: (kind?: DiagramKind) => void;
+  onCreateMemo: (kind?: NoteCreateKind) => void;
   canCreateMemo: boolean;
   isCreatingMemo: boolean;
   syncSummary: SyncQueueSummary;
@@ -423,14 +539,19 @@ export const NotebookPane = ({
   demoMode?: boolean;
   onResetDemo?: () => void;
   isResettingDemo?: boolean;
+  collapsed?: boolean;
+  onToggleCollapsed?: () => void;
 }) => {
   const { t } = useTranslation();
+  const showDescendantNotes = useShowDescendantNotesPreference();
+  const { unseen: deployedUpdateUnseen } = useDeployedUpdateNotice();
   // Temporarily keep template actions out of the primary workspace navigation.
   const showTemplateEntry = true;
   const notebookScrollRef = useRef<HTMLDivElement | null>(null);
   const notebookDragScrollFrameRef = useRef<number | null>(null);
   const [expandSiblingsRequest, setExpandSiblingsRequest] = useState<{ parentId: string | null; token: number } | null>(null);
   const [notebookSortMode, setNotebookSortMode] = useState<NotebookSortMode>(readNotebookSortPreference);
+  const [collapsedNotebookIds, setCollapsedNotebookIds] = useState<Set<string>>(readNotebookTreeCollapsedIdsPreference);
 
   const handleMoveNotebook = useCallback((notebookId: string, targetNotebookId: string, position: NotebookDropPosition) => {
     setNotebookSortMode("custom");
@@ -508,6 +629,26 @@ export const NotebookPane = ({
   }, [notebookSortMode]);
 
   useEffect(() => {
+    writeNotebookTreeCollapsedIdsPreference(collapsedNotebookIds);
+  }, [collapsedNotebookIds]);
+
+  const handleNotebookOpenChange = useCallback((notebookId: string, open: boolean) => {
+    setCollapsedNotebookIds((current) => {
+      if (current.has(notebookId) === !open) {
+        return current;
+      }
+
+      const next = new Set(current);
+      if (open) {
+        next.delete(notebookId);
+      } else {
+        next.add(notebookId);
+      }
+      return next;
+    });
+  }, []);
+
+  useEffect(() => {
     if (!selectedNotebookId) {
       return;
     }
@@ -522,7 +663,8 @@ export const NotebookPane = ({
   }, [selectedNotebookId, tree]);
 
   return (
-    <div className="flex h-full min-h-0 flex-col">
+    <div className="flex h-full min-h-0 flex-col overflow-hidden" data-notebook-sidebar-collapsed={collapsed ? "true" : "false"}>
+      <div className={cn("flex min-h-0 flex-1 flex-col", collapsed && "hidden")}>
       <header className="flex h-[calc(4rem+env(safe-area-inset-top))] shrink-0 items-end justify-between border-b border-slate-200 px-4 pb-3 pt-[env(safe-area-inset-top)] lg:hidden">
         <div>
           <div className="text-base font-semibold tracking-normal">{t("notebookPane.notebooks")}</div>
@@ -540,21 +682,21 @@ export const NotebookPane = ({
 
       <TooltipProvider delayDuration={0} skipDelayDuration={0}>
         <nav className="grid shrink-0 grid-cols-2 gap-0.5 border-b border-slate-100 px-2 py-1.5 sm:grid-cols-3 lg:grid-cols-5" aria-label={t("notebookPane.secondaryEntries")}>
-          <SidebarShortcutButton icon={<Tags className="h-4 w-4" />} label={t("mobileSheets.tags")} onClick={onOpenTags} />
-          <SidebarShortcutButton icon={<Archive className="h-4 w-4" />} label={t("mobileSheets.assets")} onClick={onOpenAssets} />
+          <SidebarShortcutButton icon={<Tag className="h-4 w-4" />} label={t("mobileSheets.tags")} onClick={onOpenTags} />
+          <SidebarShortcutButton icon={<Paperclip className="h-4 w-4" />} label={t("mobileSheets.assets")} onClick={onOpenAssets} />
           {showTemplateEntry && <SidebarShortcutButton icon={<LayoutTemplate className="h-4 w-4" />} label={t("nav.templates")} onClick={onOpenTemplates} />}
           <PluginToolbarMenu
             host={pluginHost}
             onManage={onOpenPluginManager}
             align="start"
-            className="h-9 w-full rounded-md px-0 text-slate-600"
+            className="h-9 w-full rounded-md px-0 text-slate-600 hover:bg-slate-50 hover:text-slate-950"
           />
           <SidebarTrashShortcut active={view === "trash"} onOpenTrash={onOpenTrash} onEmptyTrash={onEmptyTrash} />
         </nav>
       </TooltipProvider>
 
       {window.edgeeverDesktop?.isAvailable && (
-        <div className="px-3 pt-2">
+        <div className="px-3 pt-1.5">
           <SyncStatusBar
             summary={syncSummary}
             isOnline={isOnline}
@@ -566,52 +708,34 @@ export const NotebookPane = ({
         </div>
       )}
 
-      <div className="hidden shrink-0 px-3 pb-4 pt-4 lg:block">
-        <div className="flex overflow-hidden rounded-2xl border border-slate-200/90 bg-white shadow-[0_5px_16px_rgba(15,23,42,0.06)] transition-shadow duration-200 hover:shadow-[0_7px_20px_rgba(15,23,42,0.09)]">
+      <div className="hidden shrink-0 px-3 pb-2 pt-2 lg:block">
+        <div className="edgeever-create-memo-split flex overflow-hidden rounded-2xl border border-slate-200/90 bg-card shadow-[0_5px_16px_rgba(15,23,42,0.06)] transition-shadow duration-200 hover:shadow-[0_7px_20px_rgba(15,23,42,0.09)]">
           <button
-            className="group flex h-12 min-w-0 flex-1 items-center gap-3 px-3 text-left transition-colors duration-150 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
+            className="group flex h-12 max-w-[calc(100%-2.25rem)] shrink-0 items-center gap-2 px-2.5 text-left transition-colors duration-150 hover:bg-slate-50 focus-visible:bg-slate-50 focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
             type="button"
             aria-label={t("notebookPane.newMemo")}
             onClick={() => onCreateMemo()}
             disabled={!canCreateMemo || isCreatingMemo}
           >
-            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-600 text-white shadow-[0_5px_12px_rgb(var(--brand-green-rgb)/0.22)] transition-transform duration-150 group-hover:scale-[1.03] group-focus-visible:ring-2 group-focus-visible:ring-emerald-500/70 group-focus-visible:ring-offset-2">
+            <span className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-emerald-500 text-white shadow-[0_5px_12px_rgb(var(--brand-green-rgb)/0.22)] transition-transform duration-150 group-hover:scale-[1.03] group-focus-visible:ring-2 group-focus-visible:ring-slate-900/20 group-focus-visible:ring-offset-2">
               <Plus className="h-5 w-5" />
             </span>
-            <span className="min-w-0 truncate text-sm font-semibold text-slate-950">{t("notebookPane.newMemo")}</span>
+            <span className="whitespace-nowrap text-sm font-semibold text-slate-950">{t("notebookPane.newMemo")}</span>
           </button>
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
-                className="group relative flex h-12 w-[6.25rem] shrink-0 items-center justify-center gap-1 px-2 text-xs font-medium text-slate-600 transition-colors before:absolute before:inset-y-2.5 before:left-0 before:w-px before:bg-slate-200 hover:bg-emerald-50/70 hover:text-emerald-700 focus-visible:bg-emerald-50/70 focus-visible:text-emerald-700 focus-visible:outline-none data-[state=open]:bg-emerald-50 data-[state=open]:text-emerald-700 disabled:cursor-not-allowed disabled:opacity-50"
+                className="group relative flex h-12 min-w-9 flex-1 items-center justify-center gap-0.5 px-1.5 text-xs font-medium text-slate-600 transition-colors before:absolute before:inset-y-2.5 before:left-0 before:w-px before:bg-[var(--workspace-divider)] hover:bg-workspace-hover hover:text-slate-950 focus-visible:bg-workspace-hover focus-visible:text-slate-950 focus-visible:outline-none data-[state=open]:bg-workspace-selection data-[state=open]:text-slate-950 disabled:cursor-not-allowed disabled:opacity-50"
                 type="button"
                 aria-label={t("diagram.createType")}
                 disabled={!canCreateMemo || isCreatingMemo}
               >
-                <span className="truncate">{t("diagram.moreTypes")}</span>
+                <span className="edgeever-create-memo-split__more-label min-w-0 truncate">{t("diagram.moreTypes")}</span>
                 <ChevronDown className="h-3.5 w-3.5 shrink-0 transition-transform duration-150 group-data-[state=open]:rotate-180" aria-hidden="true" />
               </button>
             </DropdownMenuTrigger>
             <DropdownMenuContent align="start" sideOffset={8} className="w-52">
-              <DropdownMenuItem onSelect={() => onCreateMemo()}>
-                <FileText className="h-4 w-4" />
-                {t("diagram.normalNote")}
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onCreateMemo("mind-map")}>
-                <Network className="h-4 w-4" />
-                {t("diagram.mindMap")}
-                <DiagramBetaBadge />
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onCreateMemo("flowchart")}>
-                <Workflow className="h-4 w-4" />
-                {t("diagram.flowchart")}
-                <DiagramBetaBadge />
-              </DropdownMenuItem>
-              <DropdownMenuItem onSelect={() => onCreateMemo("architecture")}>
-                <Boxes className="h-4 w-4" />
-                {t("diagram.architecture")}
-                <DiagramBetaBadge />
-              </DropdownMenuItem>
+              <CreateMemoTypeItems onCreateMemo={onCreateMemo} />
             </DropdownMenuContent>
           </DropdownMenu>
         </div>
@@ -631,9 +755,8 @@ export const NotebookPane = ({
       >
         {showTemplateEntry && (
           <button
-            className="mb-3 hidden h-8 w-full items-center justify-start gap-2 rounded-md px-3 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50 lg:flex"
+            className="mb-1 hidden h-8 w-full items-center justify-start gap-2 rounded-md px-3 text-xs font-medium text-slate-500 transition-colors hover:bg-slate-50 hover:text-slate-800 disabled:cursor-not-allowed disabled:opacity-50 lg:flex"
             type="button"
-            title={t("templates.useTemplate")}
             onClick={onOpenTemplates}
             disabled={isCreatingMemo}
           >
@@ -642,9 +765,9 @@ export const NotebookPane = ({
           </button>
         )}
 
-        <nav className="mb-3 space-y-1" aria-label={t("companion.primaryNavigation")}>
+        <nav className="mb-1 space-y-1" aria-label={t("notebookPane.entries")}>
           <SidebarNavButton
-            active={!companionActive && view === "notebook" && selectedNotebookId === null}
+            active={view === "notebook" && selectedNotebookId === null}
             icon={<LayoutList className="h-4 w-4" />}
             label={t("notebookPane.allMemos")}
             onClick={onBackToList}
@@ -714,7 +837,7 @@ export const NotebookPane = ({
                 key={node.id}
                 node={node}
                 depth={0}
-                selectedNotebookId={companionActive ? null : selectedNotebookId}
+                selectedNotebookId={selectedNotebookId}
                 onSelect={onSelect}
                 onCreateNotebook={onCreateNotebook}
                 onRenameNotebook={onRenameNotebook}
@@ -722,25 +845,114 @@ export const NotebookPane = ({
                 onMoveNotebook={handleMoveNotebook}
                 onMoveMemos={onMoveMemos}
                 onDragScroll={handleNotebookScrollDragOver}
+                collapsedNotebookIds={collapsedNotebookIds}
+                onOpenChange={handleNotebookOpenChange}
                 expandSiblingsRequest={expandSiblingsRequest}
                 onExpandSiblings={handleExpandNotebookSiblings}
+                showDescendantNotes={showDescendantNotes}
               />
             ))}
           </div>
         )}
 
       </div>
+      </div>
 
-      <footer className="edgeever-workspace-sidebar-footer border-t border-slate-200 px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2 backdrop-blur-sm">
+      {collapsed && onToggleCollapsed ? (
+        <TooltipProvider delayDuration={0} skipDelayDuration={0}>
+          <div className="flex min-h-0 flex-1 flex-col items-center px-1.5 pt-4" data-notebook-sidebar-rail>
+            <div className="flex shrink-0 flex-col items-center gap-1">
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    className="flex h-8 w-8 items-center justify-center rounded-full bg-emerald-500 text-white shadow-[0_3px_8px_rgb(var(--brand-green-rgb)/0.24)] transition-transform duration-150 hover:scale-[1.03] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900/20 focus-visible:ring-offset-2 disabled:cursor-not-allowed disabled:opacity-50"
+                    aria-label={t("notebookPane.newMemo")}
+                    onClick={() => onCreateMemo()}
+                    disabled={!canCreateMemo || isCreatingMemo}
+                  >
+                    <Plus className="h-4 w-4" aria-hidden="true" />
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="right">{t("notebookPane.newMemo")}</TooltipContent>
+              </Tooltip>
+              <DropdownMenu>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuTrigger asChild>
+                      <button
+                        type="button"
+                        className="flex h-8 w-8 items-center justify-center rounded-lg text-slate-500 transition-colors hover:bg-slate-100 hover:text-slate-800 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900/20 disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label={t("diagram.createType")}
+                        disabled={!canCreateMemo || isCreatingMemo}
+                      >
+                        <LayoutGrid className="h-3.5 w-3.5" aria-hidden="true" />
+                      </button>
+                    </DropdownMenuTrigger>
+                  </TooltipTrigger>
+                  <TooltipContent side="right">{t("diagram.createType")}</TooltipContent>
+                </Tooltip>
+                <DropdownMenuContent align="start" side="right" sideOffset={8} className="w-52">
+                  <CreateMemoTypeItems onCreateMemo={onCreateMemo} />
+                </DropdownMenuContent>
+              </DropdownMenu>
+            </div>
+
+            <nav className="mt-3 flex min-h-0 flex-1 flex-col items-center gap-1" aria-label={t("notebookPane.entries")}>
+              <SidebarRailButton
+                active={view === "notebook" && selectedNotebookId === null}
+                icon={<LayoutList className="h-4 w-4" />}
+                label={t("notebookPane.allMemos")}
+                onClick={onBackToList}
+              />
+              <SidebarRailButton
+                active={view === "notebook" && selectedNotebookId !== null}
+                icon={<NotebookIcon className="h-4 w-4" />}
+                label={t("notebookPane.notebooks")}
+                onClick={onToggleCollapsed}
+              />
+              <SidebarRailButton icon={<Tag className="h-4 w-4" />} label={t("mobileSheets.tags")} onClick={onOpenTags} />
+              <SidebarRailButton icon={<Paperclip className="h-4 w-4" />} label={t("mobileSheets.assets")} onClick={onOpenAssets} />
+              {showTemplateEntry ? (
+                <SidebarRailButton icon={<LayoutTemplate className="h-4 w-4" />} label={t("nav.templates")} onClick={onOpenTemplates} />
+              ) : null}
+              <PluginToolbarMenu
+                host={pluginHost}
+                onManage={onOpenPluginManager}
+                align="start"
+                side="right"
+                tooltipSide="right"
+                className="h-9 w-9 text-slate-600"
+              />
+              <div className="mt-auto flex flex-col items-center gap-1 border-t border-slate-200/80 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2">
+                <SidebarRailButton
+                  active={view === "trash"}
+                  icon={<Trash2 className="h-4 w-4" />}
+                  label={t("notebookPane.trash")}
+                  onClick={onOpenTrash}
+                />
+                <SidebarRailButton
+                  icon={<CircleUserRound className="h-4 w-4" />}
+                  label={t("notebookPane.profile")}
+                  notice={deployedUpdateUnseen}
+                  onClick={onOpenSettings}
+                />
+                <SidebarCollapseButton collapsed onToggle={onToggleCollapsed} className="h-9 w-9" tooltipSide="right" />
+              </div>
+            </nav>
+          </div>
+        </TooltipProvider>
+      ) : (
+      <footer className="edgeever-workspace-sidebar-footer border-t border-[var(--workspace-divider)] px-3 pb-[max(0.5rem,env(safe-area-inset-bottom))] pt-2">
         <div className="space-y-1">
           <DropdownMenu>
             <DropdownMenuTrigger asChild>
               <button
-                className="flex h-8 w-full items-center gap-3 rounded-md px-3 text-left text-sm font-medium leading-none text-slate-700 transition-colors duration-200 hover:bg-slate-50 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-400/70 data-[state=open]:bg-slate-100 data-[state=open]:text-slate-950 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white dark:data-[state=open]:bg-slate-800"
+                className="flex h-9 w-full items-center gap-3 rounded-md px-3 text-left text-xs font-medium leading-5 text-slate-700 transition-colors duration-200 hover:bg-workspace-hover hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900/20 data-[state=open]:bg-workspace-hover data-[state=open]:text-slate-950"
                 type="button"
                 aria-label={t("pwa.sidebarDownloadsTitle") || "下载 EdgeEver 客户端与浏览器插件"}
               >
-                <span className="flex h-4 w-4 shrink-0 items-center justify-center text-emerald-600 dark:text-emerald-400">
+                <span className="flex h-4 w-4 shrink-0 items-center justify-center">
                   <Download className="h-4 w-4" />
                 </span>
                 <span className="min-w-0 flex-1 truncate">{t("pwa.sidebarDownloads") || "下载客户端"}</span>
@@ -750,10 +962,11 @@ export const NotebookPane = ({
               side="top"
               align="start"
               sideOffset={6}
-              className="w-64 rounded-lg border border-slate-200 bg-white p-1.5 shadow-xl dark:border-slate-800 dark:bg-slate-900"
+              className="w-64 rounded-lg border border-slate-200 bg-card p-1.5 shadow-xl  "
             >
+              <TooltipProvider delayDuration={0} skipDelayDuration={0}>
               <DropdownMenuGroup>
-                <DropdownMenuLabel className="px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                <DropdownMenuLabel className="px-2 py-1 text-xs font-medium uppercase tracking-wider text-slate-400 ">
                   {t("pwa.sidebarGroupApps") || "客户端应用"}
                 </DropdownMenuLabel>
                 <DropdownMenuItem asChild>
@@ -761,49 +974,81 @@ export const NotebookPane = ({
                     href={DESKTOP_DOWNLOAD_URL}
                     target="_blank"
                     rel="noreferrer"
-                    className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                    className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900   "
                   >
                     <div className="flex min-w-0 items-center gap-2.5">
                       <BrandIconContainer>
-                        <BrandIcon path={APPLE_ICON_PATH} color="#111827" />
+                        <BrandIcon path={APPLE_ICON_PATH} />
                       </BrandIconContainer>
                       <span className="truncate font-medium">{t("pwa.sidebarMac") || "macOS"}</span>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300">
-                      <span className="text-[11px]">DMG</span>
+                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 ">
+                      <span className="text-xs">DMG</span>
                       <ExternalLink className="h-3.5 w-3.5" />
                     </div>
                   </a>
                 </DropdownMenuItem>
-                <DropdownMenuItem asChild>
-                  <a
-                    href={DESKTOP_DOWNLOAD_URL}
-                    target="_blank"
-                    rel="noreferrer"
-                    aria-label={`${t("pwa.sidebarWindows")} ${t("pwa.sidebarWindowsBadge")}`}
-                    className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
-                  >
-                    <div className="flex min-w-0 items-center gap-2.5">
-                      <BrandIconContainer>
-                        <BrandIcon path={WINDOWS_ICON_PATH} color="#0078D4" />
-                      </BrandIconContainer>
-                      <span className="truncate font-medium">{t("pwa.sidebarWindows") || "Windows"}</span>
-                    </div>
-                    <div className="flex shrink-0 items-center gap-1 text-amber-700 dark:text-amber-400">
-                      <span className="rounded bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold dark:bg-amber-950/40">
-                        {t("pwa.sidebarWindowsBadge") || "Preview"}
-                      </span>
-                      <ExternalLink className="h-3.5 w-3.5" />
-                    </div>
-                  </a>
-                </DropdownMenuItem>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuItem asChild>
+                      <a
+                        href={DESKTOP_DOWNLOAD_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={`${t("pwa.sidebarLinux")}: ${t("pwa.sidebarLinuxAvailability")}`}
+                        className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900   "
+                      >
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <BrandIconContainer>
+                            <BrandIcon path={LINUX_ICON_PATH} className="h-4 w-4" />
+                          </BrandIconContainer>
+                          <span className="truncate font-medium">{t("pwa.sidebarLinux") || "Linux"}</span>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 ">
+                          <span className="text-xs">AppImage</span>
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </div>
+                      </a>
+                    </DropdownMenuItem>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="max-w-xs whitespace-normal">
+                    {t("pwa.sidebarLinuxAvailability")}
+                  </TooltipContent>
+                </Tooltip>
+                <Tooltip>
+                  <TooltipTrigger asChild>
+                    <DropdownMenuItem asChild>
+                      <a
+                        href={DESKTOP_DOWNLOAD_URL}
+                        target="_blank"
+                        rel="noreferrer"
+                        aria-label={`${t("pwa.sidebarWindows")}: ${t("pwa.sidebarWindowsAvailability")}`}
+                        className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900   "
+                      >
+                        <div className="flex min-w-0 items-center gap-2.5">
+                          <BrandIconContainer>
+                            <BrandIcon path={WINDOWS_ICON_PATH} color="#0078D4" />
+                          </BrandIconContainer>
+                          <span className="truncate font-medium">{t("pwa.sidebarWindows") || "Windows"}</span>
+                        </div>
+                        <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 ">
+                          <span className="text-xs">EXE</span>
+                          <ExternalLink className="h-3.5 w-3.5" />
+                        </div>
+                      </a>
+                    </DropdownMenuItem>
+                  </TooltipTrigger>
+                  <TooltipContent side="right" className="max-w-xs whitespace-normal">
+                    {t("pwa.sidebarWindowsAvailability")}
+                  </TooltipContent>
+                </Tooltip>
                 <DropdownMenuItem asChild>
                   <a
                     href={ANDROID_PLAY_URL}
                     target="_blank"
                     rel="noreferrer"
                     aria-label={t("pwa.sidebarAndroidTitle") || "在 Google Play 下载 EdgeEver 安卓端"}
-                    className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                    className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900   "
                   >
                     <div className="flex min-w-0 items-center gap-2.5">
                       <BrandIconContainer>
@@ -811,8 +1056,8 @@ export const NotebookPane = ({
                       </BrandIconContainer>
                       <span className="truncate font-medium">{t("pwa.sidebarAndroid") || "Android"}</span>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300">
-                      <span className="text-[11px]">{t("pwa.sidebarAndroidGooglePlay") || "Google Play"}</span>
+                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 ">
+                      <span className="text-xs">{t("pwa.sidebarAndroidGooglePlay") || "Google Play"}</span>
                       <ExternalLink className="h-3.5 w-3.5" />
                     </div>
                   </a>
@@ -822,16 +1067,16 @@ export const NotebookPane = ({
                     href={ANDROID_APK_URL}
                     target="_blank"
                     rel="noreferrer"
-                    className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                    className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900   "
                   >
                     <div className="flex min-w-0 items-center gap-2.5">
                       <BrandIconContainer>
-                        <Download className="h-3.5 w-3.5 text-emerald-600 dark:text-emerald-400" />
+                        <Download className="h-3.5 w-3.5 text-slate-700" />
                       </BrandIconContainer>
                       <span className="truncate font-medium">{t("pwa.sidebarAndroidApk") || "APK 下载"}</span>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300">
-                      <span className="text-[11px]">Releases</span>
+                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 ">
+                      <span className="text-xs">Releases</span>
                       <ExternalLink className="h-3.5 w-3.5" />
                     </div>
                   </a>
@@ -842,27 +1087,27 @@ export const NotebookPane = ({
                     target="_blank"
                     rel="noreferrer"
                     aria-label={t("pwa.sidebarIosTitle") || "在 App Store 下载 EdgeEver iOS 端（仅支持非大陆区 Apple ID）"}
-                    className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                    className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900   "
                   >
                     <div className="flex min-w-0 items-center gap-2">
                       <BrandIconContainer>
                         <AppStoreIcon />
                       </BrandIconContainer>
                       <span className="truncate font-medium">{t("pwa.sidebarIos") || "iOS"}</span>
-                      <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-[10px] font-medium text-slate-500 dark:bg-slate-800 dark:text-slate-400">
+                      <span className="shrink-0 rounded bg-slate-100 px-1.5 py-0.5 text-xs font-medium text-slate-500  ">
                         {t("pwa.sidebarIosRegionBadge") || "非大陆区"}
                       </span>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300">
-                      <span className="text-[11px]">{t("pwa.sidebarIosBadge") || "App Store"}</span>
+                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 ">
+                      <span className="text-xs">{t("pwa.sidebarIosBadge") || "App Store"}</span>
                       <ExternalLink className="h-3.5 w-3.5" />
                     </div>
                   </a>
                 </DropdownMenuItem>
               </DropdownMenuGroup>
-              <DropdownMenuSeparator className="my-1 bg-slate-100 dark:bg-slate-800" />
+              <DropdownMenuSeparator className="my-1 bg-slate-100 " />
               <DropdownMenuGroup>
-                <DropdownMenuLabel className="px-2 py-1 text-[11px] font-medium uppercase tracking-wider text-slate-400 dark:text-slate-500">
+                <DropdownMenuLabel className="px-2 py-1 text-xs font-medium uppercase tracking-wider text-slate-400 ">
                   {t("pwa.sidebarGroupClippers") || "浏览器剪藏插件"}
                 </DropdownMenuLabel>
                 <DropdownMenuItem asChild>
@@ -870,7 +1115,7 @@ export const NotebookPane = ({
                     href={CHROMIUM_CLIPPER_URL}
                     target="_blank"
                     rel="noreferrer"
-                    className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                    className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900   "
                   >
                     <div className="flex min-w-0 items-center gap-2.5">
                       <BrandIconContainer>
@@ -881,8 +1126,8 @@ export const NotebookPane = ({
                       </BrandIconContainer>
                       <span className="truncate font-medium">{t("pwa.sidebarChromeEdge") || "Chrome / Edge"}</span>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300">
-                      <span className="text-[11px]">{t("pwa.sidebarWebStoreBadge") || "扩展商店"}</span>
+                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 ">
+                      <span className="text-xs">{t("pwa.sidebarWebStoreBadge") || "扩展商店"}</span>
                       <ExternalLink className="h-3.5 w-3.5" />
                     </div>
                   </a>
@@ -892,7 +1137,7 @@ export const NotebookPane = ({
                     href={FIREFOX_CLIPPER_URL}
                     target="_blank"
                     rel="noreferrer"
-                    className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900 dark:text-slate-300 dark:hover:bg-slate-800 dark:hover:text-white"
+                    className="group flex cursor-pointer items-center justify-between gap-2.5 rounded-md px-2 py-1.5 text-sm text-slate-700 outline-none transition-colors hover:bg-slate-100 hover:text-slate-900 focus:bg-slate-100 focus:text-slate-900   "
                   >
                     <div className="flex min-w-0 items-center gap-2.5">
                       <BrandIconContainer>
@@ -900,31 +1145,37 @@ export const NotebookPane = ({
                       </BrandIconContainer>
                       <span className="truncate font-medium">{t("pwa.sidebarFirefox") || "Firefox"}</span>
                     </div>
-                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 dark:group-hover:text-slate-300">
-                      <span className="text-[11px]">{t("pwa.sidebarAddonsBadge") || "附加组件"}</span>
+                    <div className="flex shrink-0 items-center gap-1 text-slate-400 group-hover:text-slate-600 ">
+                      <span className="text-xs">{t("pwa.sidebarAddonsBadge") || "附加组件"}</span>
                       <ExternalLink className="h-3.5 w-3.5" />
                     </div>
                   </a>
                 </DropdownMenuItem>
               </DropdownMenuGroup>
+              </TooltipProvider>
             </DropdownMenuContent>
           </DropdownMenu>
           <div className="flex items-center gap-1">
             <button
               onClick={onOpenSettings}
-              className="flex h-8 min-w-0 flex-1 items-center gap-3 rounded-md px-3 text-left text-sm font-medium leading-none text-slate-700 transition-colors duration-200 hover:bg-slate-50 hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/70"
+              className="flex h-9 min-w-0 flex-1 items-center gap-3 rounded-md px-3 text-left text-xs font-medium leading-5 text-slate-700 transition-colors duration-200 hover:bg-workspace-hover hover:text-slate-950 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-400/70"
               type="button"
               aria-label={t("notebookPane.profile")}
             >
-              <span className="flex h-4 w-4 shrink-0 items-center justify-center">
+              <span className="relative flex h-4 w-4 shrink-0 items-center justify-center">
                 <CircleUserRound className="h-4 w-4" />
+                {deployedUpdateUnseen ? <span className="absolute -right-1 -top-1 h-1.5 w-1.5 rounded-full bg-emerald-500 ring-2 ring-[var(--workspace-sidebar)]" /> : null}
               </span>
               <span className="min-w-0 flex-1 truncate">{t("notebookPane.profile")}</span>
             </button>
             <DesktopUpdateNotice />
+            {onToggleCollapsed ? (
+              <SidebarCollapseButton collapsed={collapsed} onToggle={onToggleCollapsed} className="hidden lg:inline-flex" />
+            ) : null}
           </div>
         </div>
       </footer>
+      )}
     </div>
   );
 };

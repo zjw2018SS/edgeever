@@ -6,19 +6,42 @@ const {
   createDesktopSyncDiagnosticText,
   createDesktopSyncSummary,
   isStagedResourceReferenced,
+  stagedIdsReferencedByUnsavedContent,
   hasDesktopSyncStateReset,
   mergeMemoIdMappings,
   mergeSyncedMemos,
   normalizeDesktopMemoPayload,
+  pauseDesktopSyncForImport,
   orderBootstrapNotebooks,
+  orderDesktopSyncChanges,
   resolveDesktopMemoSyncBase,
+  resolveDesktopStaleMemoUpdate,
+  desktopLocalRevisionWitnessesRemote,
   rewriteStagedResource,
+  syncDesktopData,
   shouldAttemptDesktopRecoveryPull,
   shouldPullDesktopChanges,
 } = await import("./desktop-sync.ts");
 const { ApiRequestError } = await import("./api.ts");
 
 describe("desktop staged resource sync", () => {
+  test("holds cloud sync until an imported screenshot is saved", async () => {
+    const originalWindow = globalThis.window;
+    const events = [];
+    globalThis.window = { dispatchEvent: (event) => { events.push(event.type); return true; } };
+    try {
+      const release = await pauseDesktopSyncForImport();
+      const result = await syncDesktopData();
+      expect(result.attempted).toBe(0);
+      expect(events).not.toContain("edgeever:sync-queue-changed");
+      release();
+      release();
+      expect(events.filter((event) => event === "edgeever:sync-queue-changed")).toHaveLength(1);
+    } finally {
+      if (originalWindow !== undefined) globalThis.window = originalWindow;
+    }
+  });
+
   test("rewrites placeholders in memo JSON and markdown", () => {
     const rewrites = [{ memoId: "memo-1", placeholder: "edgeever-staged://stage-1", url: "/api/v1/resources/resource-1/blob" }];
     const value = {
@@ -65,6 +88,15 @@ describe("desktop staged resource sync", () => {
     ], "stage-1")).toBe(true);
   });
 
+  test("keeps staged bytes while an editor draft or visible image still uses the old URL", () => {
+    const rewrites = [{ memoId: "memo-1", placeholder: "edgeever-staged://stage-1", url: "/api/v1/resources/res-1/blob" }];
+    expect(stagedIdsReferencedByUnsavedContent(rewrites, [
+      { contentJson: { type: "doc", content: [{ type: "image", attrs: { src: "edgeever-staged://stage-1" } }] } },
+    ])).toEqual(new Set(["stage-1"]));
+    expect(stagedIdsReferencedByUnsavedContent(rewrites, ["edgeever-staged://stage-1"])).toEqual(new Set(["stage-1"]));
+    expect(stagedIdsReferencedByUnsavedContent(rewrites, ["edgeever-staged://stage-10"])).toEqual(new Set());
+  });
+
   test("retains a temporary id mapping when a later sync phase fails", () => {
     const retained = mergeMemoIdMappings(new Map(), new Map([["memo_local_1", "memo_remote_1"]]));
 
@@ -102,6 +134,30 @@ describe("desktop bootstrap sync", () => {
       "grandchild",
     ]);
   });
+
+  test("applies notebook upserts before memos in an incremental change page", () => {
+    const memo = { entityType: "memo", entityId: "memo-1", operation: "upsert", notebook: null };
+    const child = {
+      entityType: "notebook",
+      entityId: "child",
+      operation: "upsert",
+      notebook: { id: "child", parentId: "parent" },
+    };
+    const parent = {
+      entityType: "notebook",
+      entityId: "parent",
+      operation: "upsert",
+      notebook: { id: "parent", parentId: null },
+    };
+    const deleted = { entityType: "notebook", entityId: "gone", operation: "delete", notebook: null };
+
+    expect(orderDesktopSyncChanges([memo, child, deleted, parent]).map((change) => change.entityId)).toEqual([
+      "parent",
+      "child",
+      "gone",
+      "memo-1",
+    ]);
+  });
 });
 
 describe("desktop memo sync base", () => {
@@ -117,6 +173,91 @@ describe("desktop memo sync base", () => {
       { revision: 9, contentHash: "cloud-9" },
       { expectedRevision: 3, expectedContentHash: "cloud-3" },
     )).toEqual({ expectedRevision: 3, expectedContentHash: "cloud-3" });
+  });
+
+  test("acks a lost save when the cloud already has the queued payload", () => {
+    expect(resolveDesktopStaleMemoUpdate({
+      current: { revision: 10, contentHash: "hash-a" },
+      expected: { expectedRevision: 9, expectedContentHash: "hash-before" },
+      payload: { title: "", tags: [], contentMarkdown: "一期验收通过。", contentJson: { type: "doc" } },
+      remote: { title: "无标题笔记", tags: [], contentMarkdown: "一期验收通过。", contentHash: "hash-a", contentJson: { type: "doc" } },
+      localRevisions: [],
+    })).toBe("ack");
+  });
+
+  test("rebases a later local draft when a sidecar snapshot already contains the cloud body", () => {
+    const remote = {
+      title: "无标题笔记",
+      tags: [],
+      contentMarkdown: "一期验收通过。",
+      contentHash: "hash-a",
+      contentJson: { type: "doc", content: [{ type: "paragraph" }] },
+    };
+
+    expect(desktopLocalRevisionWitnessesRemote([
+      {
+        id: "revision_local_1",
+        revision: 9,
+        contentHash: "sidecar-a",
+        contentMarkdown: "一期验收通过。",
+        contentJson: remote.contentJson,
+      },
+    ], remote, 9)).toBe(true);
+
+    expect(resolveDesktopStaleMemoUpdate({
+      current: { revision: 10, contentHash: "hash-a" },
+      expected: { expectedRevision: 9, expectedContentHash: "hash-before" },
+      payload: { title: "", tags: [], contentMarkdown: "一期验收通过。然后继续写。", contentJson: { type: "doc" } },
+      remote,
+      localRevisions: [{
+        id: "revision_local_1",
+        revision: 9,
+        contentHash: "sidecar-a",
+        contentMarkdown: "一期验收通过。",
+        contentJson: remote.contentJson,
+      }],
+    })).toBe("rebase");
+  });
+
+  test("does not treat an older local snapshot or a remote-cached revision as proof", () => {
+    const remote = {
+      title: "无标题笔记",
+      tags: [],
+      contentMarkdown: "别人改过的正文",
+      contentHash: "hash-other",
+      contentJson: { type: "doc" },
+    };
+
+    expect(desktopLocalRevisionWitnessesRemote([
+      {
+        id: "revision_local_old",
+        revision: 3,
+        contentHash: "hash-other",
+        contentMarkdown: "别人改过的正文",
+        contentJson: remote.contentJson,
+      },
+      {
+        id: "rev_remote_cached",
+        revision: 10,
+        contentHash: "hash-other",
+        contentMarkdown: "别人改过的正文",
+        contentJson: remote.contentJson,
+      },
+    ], remote, 9)).toBe(false);
+
+    expect(resolveDesktopStaleMemoUpdate({
+      current: { revision: 10, contentHash: "hash-other" },
+      expected: { expectedRevision: 9, expectedContentHash: "hash-before" },
+      payload: { title: "", tags: [], contentMarkdown: "本地还在写的草稿", contentJson: { type: "doc" } },
+      remote,
+      localRevisions: [{
+        id: "revision_local_9",
+        revision: 9,
+        contentHash: "sidecar-local",
+        contentMarkdown: "本地还在写的草稿",
+        contentJson: { type: "doc" },
+      }],
+    })).toBe("conflict");
   });
 });
 

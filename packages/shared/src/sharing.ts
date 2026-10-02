@@ -1,4 +1,5 @@
 import type { TiptapDoc, TiptapNode, TiptapTextNode } from "./content";
+import type { PublicNoteProse } from "./note-prose";
 import { parseMemoLinkHref } from "./note-links";
 
 export type MemoShare = {
@@ -6,7 +7,27 @@ export type MemoShare = {
   token: string;
   createdAt: string;
   updatedAt: string;
+  passwordProtected: boolean;
+  /** Plaintext is returned only immediately after the owner enables or regenerates a password. */
+  password?: string;
 };
+
+export const PUBLISHED_NOTE_BODY_FONTS = [
+  "wenkai",
+  "wenkai-screen",
+  "zhuque",
+  "source-han-serif",
+  "neo-zhi-song",
+  "source-han-sans",
+  "source-serif",
+] as const;
+
+export type PublishedNoteBodyFont = (typeof PUBLISHED_NOTE_BODY_FONTS)[number];
+
+export const parsePublishedNoteBodyFont = (value: unknown): PublishedNoteBodyFont | null =>
+  typeof value === "string" && (PUBLISHED_NOTE_BODY_FONTS as readonly string[]).includes(value)
+    ? value as PublishedNoteBodyFont
+    : null;
 
 export type PublicMemoShare = {
   title: string | null;
@@ -15,6 +36,10 @@ export type PublicMemoShare = {
   tags: string[];
   updatedAt: string;
   memoShareTokens: Record<string, string>;
+  /** Built-in face chosen by the author. Null keeps the system font and downloads nothing. */
+  bodyFont: PublishedNoteBodyFont | null;
+  /** Account reading settings for the article body. Column width stays on the author's editor. */
+  prose: PublicNoteProse;
 };
 
 const RESOURCE_URL_PATTERN = /^\/api\/v1\/resources\/([^/?#]+)\/blob(?:[?#].*)?$/;

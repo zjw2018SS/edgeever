@@ -86,10 +86,10 @@ const copy = siteCopy[locale].hero;
     </div>
 
     <!-- Multi-Platform Client Badges -->
-    <div class="animate-rise mt-6 w-full max-w-full sm:max-w-lg z-30 relative" style="animation-delay: 240ms;">
+    <div class="animate-rise mt-6 w-full max-w-full z-30 relative" style="animation-delay: 240ms;">
       <div class="pt-4 border-t border-slate-200/60 flex flex-wrap items-center gap-2">
         <span class="text-[11px] font-semibold text-slate-500 mr-1 select-none">
-          {locale === "en-US" ? "Get Apps:" : "获取客户端："}
+          {copy.getApps}
         </span>
         <a
           href="https://github.com/tianma-if/edgeever/releases"
@@ -110,7 +110,16 @@ const copy = siteCopy[locale].hero;
           <span>{copy.windows}</span>
         </a>
         <a
-          href="https://apps.apple.com/us/app/edgeever/id6792625631"
+          href="https://github.com/tianma-if/edgeever/releases/latest"
+          target="_blank"
+          rel="noopener"
+          class="inline-flex min-h-11 sm:min-h-0 items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100/90 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 border border-slate-200/80 text-[11px] font-medium text-slate-700 transition-all shadow-2xs"
+        >
+          <Icon name="simple-icons:linux" class="w-3.5 h-3.5" />
+          <span>{copy.linux}</span>
+        </a>
+        <a
+          href={locale === "ja" ? "https://apps.apple.com/jp/app/edgeever/id6792625631" : "https://apps.apple.com/us/app/edgeever/id6792625631"}
           target="_blank"
           rel="noopener"
           class="inline-flex min-h-11 sm:min-h-0 items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100/90 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 border border-slate-200/80 text-[11px] font-medium text-slate-700 transition-all shadow-2xs"
@@ -119,7 +128,7 @@ const copy = siteCopy[locale].hero;
           <span>iOS</span>
         </a>
         <a
-          href="https://play.google.com/store/apps/details?id=org.edgeever.mobile"
+          href={locale === "ja" ? "https://play.google.com/store/apps/details?id=org.edgeever.mobile&hl=ja" : "https://play.google.com/store/apps/details?id=org.edgeever.mobile"}
           target="_blank"
           rel="noopener"
           class="inline-flex min-h-11 sm:min-h-0 items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100/90 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 border border-slate-200/80 text-[11px] font-medium text-slate-700 transition-all shadow-2xs"
@@ -134,7 +143,7 @@ const copy = siteCopy[locale].hero;
           class="inline-flex min-h-11 sm:min-h-0 items-center gap-1.5 px-2.5 py-1 rounded-lg bg-slate-100/90 hover:bg-emerald-50 hover:text-emerald-700 hover:border-emerald-300 border border-slate-200/80 text-[11px] font-medium text-slate-700 transition-all shadow-2xs"
         >
           <Icon name="bx:bx-extension" class="w-3.5 h-3.5" />
-          <span>{locale === "en-US" ? "Clipper" : "剪藏插件"}</span>
+          <span>{copy.clipper}</span>
         </a>
       </div>
     </div>
@@ -184,6 +193,9 @@ const copy = siteCopy[locale].hero;
     font-family:
       "Inter Variable",
       Inter,
+      "Hiragino Sans",
+      "Hiragino Kaku Gothic ProN",
+      "Yu Gothic",
       "PingFang SC",
       "Hiragino Sans GB",
       "Microsoft YaHei",
@@ -197,10 +209,17 @@ const copy = siteCopy[locale].hero;
   (function () {
     function formatCount(count) {
       if (typeof count !== "number") return String(count);
-      if (count >= 1000) {
-        return (count / 1000).toFixed(1).replace(/\.0$/, "") + "k";
+      try {
+        return new Intl.NumberFormat("en", {
+          notation: "compact",
+          maximumFractionDigits: 1,
+        }).format(count).toLowerCase();
+      } catch (e) {
+        if (count >= 1000) {
+          return (Math.round(count / 100) / 10).toFixed(1).replace(/\.0$/, "") + "k";
+        }
+        return count.toLocaleString();
       }
-      return count.toLocaleString();
     }
 
     async function fetchGitHubStats() {

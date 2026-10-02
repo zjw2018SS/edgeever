@@ -1,6 +1,7 @@
 use rusqlite::Connection;
 use serde_json::{json, Value};
 
+use crate::note_summary::note_list_metadata;
 use crate::{
     bool_param, content_hash, enqueue_change, markdown_doc, memo_remap_base_key, now_id,
     resolve_remapped_memo_base, string_param, tags_from_json,
@@ -8,7 +9,8 @@ use crate::{
 
 fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
     let tags: String = row.get("tags_json")?;
-    Ok(json!({
+    let markdown: String = row.get("content_markdown")?;
+    let mut summary = json!({
         "id": row.get::<_, String>("id")?,
         "notebookId": row.get::<_, String>("notebook_id")?,
         "title": row.get::<_, Option<String>>("title")?,
@@ -21,7 +23,12 @@ fn summary_from_row(row: &rusqlite::Row<'_>) -> rusqlite::Result<Value> {
         "createdAt": row.get::<_, String>("created_at")?,
         "updatedAt": row.get::<_, String>("updated_at")?,
         "deletedAt": row.get::<_, Option<String>>("deleted_at")?,
-    }))
+    });
+    let metadata = note_list_metadata(&markdown);
+    if let (Some(summary), Some(metadata)) = (summary.as_object_mut(), metadata.as_object()) {
+        summary.extend(metadata.clone());
+    }
+    Ok(summary)
 }
 
 pub(crate) fn memo_value(
@@ -400,6 +407,12 @@ pub(crate) fn list_memos(database: &Connection, params: &Value) -> Result<Value,
         None
     };
     let notebook_ids_json = Value::Array(notebook_ids).to_string();
+    let tag = params
+        .get("tag")
+        .and_then(Value::as_str)
+        .unwrap_or("")
+        .trim()
+        .to_owned();
     let filter = match params.get("filter").and_then(Value::as_str) {
         Some("pinned") => " AND m.is_pinned = 1",
         Some("tagged") => " AND json_array_length(m.tags_json) > 0",
@@ -424,13 +437,20 @@ pub(crate) fn list_memos(database: &Connection, params: &Value) -> Result<Value,
         .and_then(Value::as_i64)
         .unwrap_or(0)
         .max(0);
-    let query = format!("SELECT m.id, m.notebook_id, m.title, m.excerpt, m.tags_json, m.is_pinned, m.is_archived, m.is_deleted,
-                c.revision, m.created_at, m.updated_at, m.deleted_at
-           FROM memos m JOIN memo_contents c ON c.memo_id = m.id
-          WHERE m.is_deleted = ?1 AND (?2 = '' OR lower(COALESCE(m.title, '') || ' ' || m.excerpt || ' ' || c.content_text || ' ' || m.tags_json) LIKE '%' || lower(?2) || '%')
+    let where_clause = format!(
+        "m.is_deleted = ?1 AND (?2 = '' OR lower(COALESCE(m.title, '') || ' ' || m.excerpt || ' ' || c.content_text || ' ' || m.tags_json) LIKE '%' || lower(?2) || '%')
             AND (?3 IS NULL OR m.notebook_id = ?3)
-            AND (?4 = '[]' OR m.notebook_id IN (SELECT value FROM json_each(?4))){}
-          ORDER BY {} LIMIT ?5 OFFSET ?6", filter, order);
+            AND (?4 = '[]' OR m.notebook_id IN (SELECT value FROM json_each(?4)))
+            AND (?5 = '' OR EXISTS (
+                SELECT 1 FROM json_each(m.tags_json) AS memo_tag
+                WHERE LOWER(TRIM(CAST(memo_tag.value AS TEXT))) = LOWER(?5)
+            )){filter}"
+    );
+    let query = format!("SELECT m.id, m.notebook_id, m.title, m.excerpt, m.tags_json, m.is_pinned, m.is_archived, m.is_deleted,
+                c.revision, m.created_at, m.updated_at, m.deleted_at, c.content_markdown
+           FROM memos m JOIN memo_contents c ON c.memo_id = m.id
+          WHERE {where_clause}
+          ORDER BY {order} LIMIT ?6 OFFSET ?7");
     let mut statement = database.prepare(&query).map_err(|e| e.to_string())?;
     let rows = statement
         .query_map(
@@ -439,6 +459,7 @@ pub(crate) fn list_memos(database: &Connection, params: &Value) -> Result<Value,
                 q,
                 notebook_id,
                 notebook_ids_json,
+                tag,
                 limit,
                 offset
             ],
@@ -446,11 +467,13 @@ pub(crate) fn list_memos(database: &Connection, params: &Value) -> Result<Value,
         )
         .map_err(|e| e.to_string())?;
     let memos: Result<Vec<_>, _> = rows.collect();
-    let count_query = format!("SELECT COUNT(*) FROM memos m JOIN memo_contents c ON c.memo_id = m.id WHERE m.is_deleted = ?1 AND (?2 = '' OR lower(COALESCE(m.title, '') || ' ' || m.excerpt || ' ' || c.content_text || ' ' || m.tags_json) LIKE '%' || lower(?2) || '%') AND (?3 IS NULL OR m.notebook_id = ?3) AND (?4 = '[]' OR m.notebook_id IN (SELECT value FROM json_each(?4))){}", filter);
+    let count_query = format!(
+        "SELECT COUNT(*) FROM memos m JOIN memo_contents c ON c.memo_id = m.id WHERE {where_clause}"
+    );
     let total: i64 = database
         .query_row(
             &count_query,
-            rusqlite::params![trash as i64, q, notebook_id, notebook_ids_json],
+            rusqlite::params![trash as i64, q, notebook_id, notebook_ids_json, tag],
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
@@ -600,6 +623,39 @@ pub(crate) fn update_memo(database: &Connection, params: &Value) -> Result<Value
 
 pub(crate) fn delete_memo(database: &Connection, params: &Value) -> Result<Value, String> {
     let memo_id = string_param(params, "memoId")?;
+    if bool_param(params, "cancelPendingCreate", false) {
+        if !bool_param(params, "permanent", false) || !memo_id.starts_with("memo_local_") {
+            return Err("Only an unsynced local memo can be cancelled".to_owned());
+        }
+        let tx = database
+            .unchecked_transaction()
+            .map_err(|e| e.to_string())?;
+        let pending_create: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM _edgeever_sidecar_outbox WHERE kind = 'memo.create' AND entity_id = ?1 AND status = 'pending'",
+            [&memo_id],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        let other_changes: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM _edgeever_sidecar_outbox WHERE entity_id = ?1 AND kind <> 'memo.create'",
+            [&memo_id],
+            |row| row.get(0),
+        ).map_err(|e| e.to_string())?;
+        if pending_create != 1 || other_changes != 0 {
+            return Err("Local memo cannot be cancelled after synchronization started".to_owned());
+        }
+        let deleted = tx
+            .execute("DELETE FROM memos WHERE id = ?1", [&memo_id])
+            .map_err(|e| e.to_string())?;
+        if deleted != 1 {
+            return Err("Local memo no longer exists".to_owned());
+        }
+        tx.execute(
+            "DELETE FROM _edgeever_sidecar_outbox WHERE kind = 'memo.create' AND entity_id = ?1 AND status = 'pending'",
+            [&memo_id],
+        ).map_err(|e| e.to_string())?;
+        tx.commit().map_err(|e| e.to_string())?;
+        return Ok(json!({ "ok": true }));
+    }
     if bool_param(params, "permanent", false) {
         database
             .execute("DELETE FROM memos WHERE id = ?1", [&memo_id])

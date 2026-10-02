@@ -1,16 +1,20 @@
 import { afterAll, expect, test } from 'bun:test';
+import { restoreTestGlobal } from '../restore-test-global.mjs';
 const originalWindow = globalThis.window;
 const originalDocument = globalThis.document;
 const originalMutationObserver = globalThis.MutationObserver;
 const values = new Map();
-globalThis.window = { location: { href: 'https://example.test' }, localStorage: { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) }, addEventListener() {}, removeEventListener() {} };
-globalThis.document = { documentElement: { classList: { contains: () => false }, dataset: {}, style: { setProperty() {}, removeProperty() {} }, removeAttribute() {} } };
-globalThis.MutationObserver = class { observe() {} disconnect() {} };
+const stubWindow = { location: { href: 'https://example.test' }, localStorage: { getItem: key => values.get(key) ?? null, setItem: (key, value) => values.set(key, String(value)), removeItem: key => values.delete(key) }, addEventListener() {}, removeEventListener() {} };
+const stubDocument = { documentElement: { classList: { contains: () => false }, dataset: {}, style: { setProperty() {}, removeProperty() {} }, removeAttribute() {} } };
+const StubMutationObserver = class { observe() {} disconnect() {} };
+globalThis.window = stubWindow;
+globalThis.document = stubDocument;
+globalThis.MutationObserver = StubMutationObserver;
 const { EdgeEverPluginHost } = await import('./plugin-host');
 afterAll(() => {
-  globalThis.window = originalWindow;
-  globalThis.document = originalDocument;
-  globalThis.MutationObserver = originalMutationObserver;
+  restoreTestGlobal('window', originalWindow, stubWindow);
+  restoreTestGlobal('document', originalDocument, stubDocument);
+  restoreTestGlobal('MutationObserver', originalMutationObserver, StubMutationObserver);
 });
 function setup() {
   values.clear();
@@ -19,7 +23,7 @@ function setup() {
   const gate = new Promise(resolve => { release = resolve; });
   const host = new EdgeEverPluginHost({ scope: crypto.randomUUID(), packageStorage: { get: async () => null }, repository: { listMemos: async () => { calls++; entered(); await gate; return { memos: [], totalCount: 0, nextCursor: null }; } } });
   const id = `org.edgeever.lifecycle-${crypto.randomUUID()}`;
-  host.installManifest({ type: 'plugin', id, name: 'Delayed activation', version: '1.0.0', apiVersion: '1', entry: new URL('./plugin-lifecycle.fixture.mjs', import.meta.url).href, permissions: ['notes:read', 'ui:commands', 'ui:panels'] }, 'https://example.test/manifest.json');
+  host.installManifest({ type: 'plugin', id, name: 'Delayed activation', version: '1.0.0', apiVersion: '2', settingsUi: 'host', entry: new URL('./plugin-lifecycle.fixture.mjs', import.meta.url).href, permissions: ['notes:read', 'ui:commands', 'ui:panels'] }, 'https://example.test/manifest.json');
   return { host, id, started, release, calls: () => calls };
 }
 test('concurrent enable requests share a single asynchronous activation', async () => {

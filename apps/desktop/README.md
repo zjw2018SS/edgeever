@@ -32,8 +32,9 @@ Regenerate committed icon assets after changing the brand mark:
 bun run prepare:desktop:icons
 ```
 
-This writes `apps/desktop/assets/icon.icns` (full ICNS) and `icon.png` (1024
-master). Packaging validation rejects incomplete ICNS types. Runtime also calls
+This writes `apps/desktop/assets/icon.icns` (full ICNS), `icon.png` (1024
+master), and the macOS menu-bar template icons from the brand mark.
+Packaging validation rejects incomplete ICNS types. Runtime also calls
 `app.dock.setIcon` as a Launch Services / Dock cache fallback.
 
 Preview the committed icon at its real Dock size without starting EdgeEver:
@@ -78,9 +79,17 @@ runs. When a GitHub Release is published, the workflow first compares it with
 the previous formal Release. It rebuilds and publishes the installer through
 electron-builder only when Electron, the Rust sidecar, native dependencies,
 packaging configuration, or desktop build tooling changed. Web-only Releases
-reuse the previous verified arm64/x64 DMGs, updater ZIPs, blockmaps, and
-combined update metadata without renaming them, so the macOS runners and
-signing pipeline are not scheduled unnecessarily.
+reuse the previous verified macOS DMGs and updater metadata, Windows Preview
+installer, and Linux Preview AppImage without renaming them, so native runners
+and signing pipelines are not scheduled unnecessarily.
+
+Formal Releases also contain a Linux x64 AppImage Preview built on Ubuntu
+22.04. The workflow verifies the Electron and Rust ELF architectures, caps the
+sidecar requirement at glibc 2.35, runs the packaged sidecar integration suite,
+performs an Xvfb first-launch smoke test, and publishes a matching
+`SHA256SUMS-linux.txt` and `latest-linux.yml`. Linux Preview releases must pass
+a real AppImage-to-AppImage automatic update through the cross-version gate. See
+[`docs/linux-preview.md`](../../docs/linux-preview.md).
 
 The desktop Settings page exposes the sidecar's local backup list. Restoring a
 backup creates an additional protective backup first, restores the SQLite

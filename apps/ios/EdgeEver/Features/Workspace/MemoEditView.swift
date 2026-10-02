@@ -542,7 +542,7 @@ struct MemoEditView: View {
                         markdown: contentMarkdown,
                         baseURL: env.session.session.map { URL(string: $0.baseUrl) } ?? nil,
                         token: env.session.session?.token,
-                        locale: env.preferences.isEnglish ? "en-US" : "zh-CN",
+                        locale: env.preferences.apiLocale,
                         theme: colorScheme == .dark ? "dark" : "light",
                         placeholder: env.preferences.t("开始输入…", en: "Start writing…"),
                         onChange: { md, json in
@@ -771,7 +771,7 @@ struct MemoEditView: View {
                 title: title,
                 contentMarkdown: contentMarkdown,
                 currentTags: currentTags,
-                locale: env.preferences.isEnglish ? "en-US" : "zh-CN"
+                locale: env.preferences.apiLocale
             )
             do {
                 let response = try await env.session.client.suggestAiTags(input)
@@ -808,8 +808,8 @@ struct MemoEditView: View {
                 isSuggestingTags = false
                 smartTagAlertTitle = env.preferences.t("智能标签生成失败", en: "Couldn't generate smart tags")
                 smartTagAlertMessage = env.preferences.t(
-                    "请先在“AI 集成”中配置默认模型。",
-                    en: "Configure a model in AI Integrations first."
+                    "请先在“模型与代理”中配置默认模型。",
+                    en: "Configure a model in Models and agents first."
                 )
                 showSmartTagAlert = true
                 smartTagTask = nil
@@ -1357,20 +1357,35 @@ struct MemoEditView: View {
     }
 }
 
-private struct MemoTagPickerSheet: View {
+struct MemoTagPickerSheet: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(\.dismiss) private var dismiss
     @State private var selection: [String]
     @State private var query = ""
     @State private var availableTags: [TagSummary] = []
     @State private var error: String?
+    let allowCreate: Bool
+    let maxSelections: Int
+    let closeOnSelection: Bool
+    let title: String
+    let titleEN: String
     let onChange: ([String]) -> Void
 
     init(
         selectedTags: [String],
+        allowCreate: Bool = true,
+        maxSelections: Int = 24,
+        closeOnSelection: Bool = false,
+        title: String = "选择标签",
+        titleEN: String = "Choose tags",
         onChange: @escaping ([String]) -> Void
     ) {
         _selection = State(initialValue: selectedTags)
+        self.allowCreate = allowCreate
+        self.maxSelections = maxSelections
+        self.closeOnSelection = closeOnSelection
+        self.title = title
+        self.titleEN = titleEN
         self.onChange = onChange
     }
 
@@ -1419,11 +1434,18 @@ private struct MemoTagPickerSheet: View {
 
                 HStack(spacing: 8) {
                     Image(systemName: "magnifyingglass").foregroundStyle(AppTheme.muted)
-                    TextField(env.preferences.t("搜索或输入新标签", en: "Search or enter a new tag"), text: $query)
+                    TextField(
+                        allowCreate
+                            ? env.preferences.t("搜索或输入新标签", en: "Search or enter a new tag")
+                            : env.preferences.t("搜索标签", en: "Search tags"),
+                        text: $query
+                    )
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
-                        .onSubmit(createTag)
-                    if !normalizedQuery.isEmpty && !hasExactMatch && selection.count < 24 {
+                        .onSubmit {
+                            if allowCreate { createTag() }
+                        }
+                    if allowCreate && !normalizedQuery.isEmpty && !hasExactMatch && selection.count < maxSelections {
                         Button(env.preferences.t("新建", en: "Create"), action: createTag)
                             .font(.system(size: 13, weight: .bold))
                     }
@@ -1461,13 +1483,15 @@ private struct MemoTagPickerSheet: View {
                         ContentUnavailableView(
                             env.preferences.t("暂无匹配标签", en: "No matching tags"),
                             systemImage: "tag",
-                            description: Text(env.preferences.t("可以输入名称创建新标签。", en: "Enter a name to create a new tag."))
+                            description: allowCreate
+                                ? Text(env.preferences.t("可以输入名称创建新标签。", en: "Enter a name to create a new tag."))
+                                : Text(env.preferences.t("换个关键词再试。", en: "Try another keyword."))
                         )
                     }
                 }
             }
             .padding(.top, 12)
-            .navigationTitle(env.preferences.t("选择标签", en: "Choose tags"))
+            .navigationTitle(env.preferences.t(title, en: titleEN))
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -1488,12 +1512,11 @@ private struct MemoTagPickerSheet: View {
     }
 
     private func toggle(_ tag: String) {
-        if let index = selection.firstIndex(of: tag) {
-            selection.remove(at: index)
-        } else if selection.count < 24 {
-            selection.append(tag)
-        }
+        selection = MobileUI.toggleTagSelection(current: selection, tag: tag, maxSelections: maxSelections)
         onChange(selection)
+        if closeOnSelection {
+            dismiss()
+        }
     }
 
     private func createTag() {
@@ -1501,7 +1524,7 @@ private struct MemoTagPickerSheet: View {
             .split(whereSeparator: { $0 == "," || $0 == "，" || $0.isNewline })
             .map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
             .filter { !$0.isEmpty }
-        for tag in additions where selection.count < 24 && !selection.contains(tag) {
+        for tag in additions where selection.count < maxSelections && !selection.contains(tag) {
             selection.append(tag)
         }
         query = ""
@@ -1513,7 +1536,7 @@ private struct MemoTagPickerSheet: View {
 
 // MARK: - Compact notebook picker for create/edit
 
-private struct EditNotebookPickerSheet: View {
+struct EditNotebookPickerSheet: View {
     @Environment(AppEnvironment.self) private var env
     @Environment(\.dismiss) private var dismiss
     let notebooks: [Notebook]

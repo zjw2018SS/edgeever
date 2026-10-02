@@ -48,15 +48,19 @@ struct WorkspaceView: View {
             // List pads the solid white chrome height; create button lives inside the tab bar under the separator.
             ZStack(alignment: .bottom) {
                 VStack(spacing: 0) {
-                    syncBanner
-                    listHeader
-                    NotesListView(
-                        store: store,
-                        path: $path,
-                        onCreateNote: { openCreateNote() },
-                        onCreateFromTemplate: { openCreateFromTemplate() }
-                    )
+                    if showSettings {
+                        SettingsView(onClose: { showSettings = false })
+                    } else {
+                        syncBanner
+                        listHeader
+                        NotesListView(
+                            store: store,
+                            path: $path,
+                            onCreateNote: { openCreateNote() },
+                            onCreateFromTemplate: { openCreateFromTemplate() }
+                        )
                         .frame(maxWidth: .infinity, maxHeight: .infinity)
+                    }
                 }
                 .background(AppTheme.background)
                 .padding(.bottom, showsBottomChrome ? bottomChromeHeight : 0)
@@ -83,10 +87,6 @@ struct WorkspaceView: View {
                         }
                     }
                 }
-            }
-            // Android Me is full-screen (activeView === "settings"), not a half-sheet Form.
-            .fullScreenCover(isPresented: $showSettings) {
-                SettingsView()
             }
             // Android CreateMemoModal is fullScreen — not a half sheet / Form.
             .fullScreenCover(isPresented: $showNewNote) {
@@ -151,6 +151,20 @@ struct WorkspaceView: View {
             .sheet(isPresented: $store.showActions) {
                 ListActionsSheet(store: store)
             }
+            .sheet(isPresented: $store.showTagFilterPicker) {
+                MemoTagPickerSheet(
+                    selectedTags: store.selectedTag.map { [$0] } ?? [],
+                    allowCreate: false,
+                    maxSelections: 1,
+                    closeOnSelection: true,
+                    title: "按标签筛选",
+                    titleEN: "Filter by tag"
+                ) { tags in
+                    store.selectTag(tags.first)
+                    store.reload(env: env)
+                }
+                .presentationDetents([.medium, .large])
+            }
             .sheet(isPresented: $showMoveSheet) {
                 MoveNotebookSheet(notebooks: store.notebooks) { notebookId in
                     Task {
@@ -196,6 +210,9 @@ struct WorkspaceView: View {
             .onChange(of: env.bootstrapProgress?.totalCount) { _, _ in
                 store.reload(env: env)
             }
+            .onChange(of: env.preferences.showDescendantNotes) { _, _ in
+                store.reload(env: env)
+            }
             .refreshable {
                 await env.runSyncCycle(force: true)
                 store.reload(env: env)
@@ -209,10 +226,10 @@ struct WorkspaceView: View {
                             ProgressView()
                                 .controlSize(.large)
                                 .tint(AppTheme.accent)
-                            Text(env.preferences.t("正在剪藏文章", en: "Clipping article"))
+                            Text(env.preferences.t("正在剪藏文章", en: "Clipping article", ja: "記事を取り込んでいます"))
                                 .font(.system(size: 17, weight: .bold))
                                 .foregroundStyle(AppTheme.title)
-                            Text(env.preferences.t("正在提取标题、正文和图片链接…", en: "Extracting the title, body, and image links…"))
+                            Text(env.preferences.t("正在提取标题、正文和图片链接…", en: "Extracting the title, body, and image links…", ja: "タイトル、本文、画像リンクを抽出しています…"))
                                 .font(.system(size: 13))
                                 .foregroundStyle(AppTheme.secondary)
                                 .multilineTextAlignment(.center)
@@ -276,20 +293,36 @@ struct WorkspaceView: View {
 
             HStack(alignment: .center) {
                 Button {
-                    store.showNotebookPicker = true
+                    if store.selectedTag != nil {
+                        clearTagFilter()
+                    } else {
+                        store.showNotebookPicker = true
+                    }
                 } label: {
                     HStack(spacing: 4) {
-                        Text(store.activeNotebook?.name ?? env.preferences.t("全部笔记", en: "All notes"))
+                        if store.selectedTag != nil {
+                            Image(systemName: "chevron.left")
+                                .font(.system(size: 13, weight: .semibold))
+                                .foregroundStyle(AppTheme.secondary)
+                        }
+                        Text(store.selectedTag.map { "#\($0)" } ?? store.activeNotebook?.name ?? env.preferences.t("全部笔记", en: "All notes"))
                             .font(AppTheme.notebookTitleFont)
                             .foregroundStyle(AppTheme.title)
                             .lineLimit(1)
-                        Image(systemName: "chevron.down")
-                            .font(.system(size: 12, weight: .semibold))
-                            .foregroundStyle(AppTheme.secondary)
+                        if store.selectedTag == nil {
+                            Image(systemName: "chevron.down")
+                                .font(.system(size: 12, weight: .semibold))
+                                .foregroundStyle(AppTheme.secondary)
+                        }
                     }
                     .frame(minHeight: MobileUIMetrics.compactControlHeight)
                 }
                 .buttonStyle(.plain)
+                .accessibilityLabel(
+                    store.selectedTag == nil
+                        ? env.preferences.t("切换笔记本", en: "Switch notebook")
+                        : env.preferences.t("返回笔记列表", en: "Back to notes")
+                )
                 Spacer(minLength: 8)
                 Button {
                     store.showActions = true
@@ -353,32 +386,21 @@ struct WorkspaceView: View {
                     store.reload(env: env)
                 }
                 filterChip(
-                    active: store.filter == .tagged,
-                    systemImage: "tag",
-                    label: env.preferences.t("有标签", en: "Tagged")
+                    active: store.selectedTag != nil,
+                    systemImage: store.selectedTag == nil ? "tag" : "tag.fill",
+                    label: store.selectedTag.map { "#\($0)" }
+                        ?? env.preferences.t("按标签筛选", en: "Filter by tag")
                 ) {
-                    withAnimation(Motion.chip) {
-                        store.toggleFilter(.tagged)
-                    }
-                    store.reload(env: env)
-                }
-                filterChip(
-                    active: store.filter == .untagged,
-                    systemImage: "tag.fill",
-                    label: env.preferences.t("无标签", en: "Untagged")
-                ) {
-                    withAnimation(Motion.chip) {
-                        store.toggleFilter(.untagged)
-                    }
-                    store.reload(env: env)
+                    store.showTagFilterPicker = true
                 }
             }
             .edgeEverSelectionFeedback(store.filter)
+            .animation(Motion.chip, value: store.selectedTag)
             .onChange(of: store.searchText) { _, _ in
                 store.scheduleSearch(env: env)
             }
 
-            if searchActive || store.filter != .all {
+            if searchActive || store.filter != .all || store.selectedTag != nil {
                 constraintBar
                     .padding(.top, 12)
                     .transition(.move(edge: .top).combined(with: .opacity))
@@ -391,7 +413,7 @@ struct WorkspaceView: View {
         .overlay(alignment: .bottom) {
             Rectangle().fill(AppTheme.border).frame(height: 1)
         }
-        .animation(Motion.search, value: searchActive || store.filter != .all)
+        .animation(Motion.search, value: searchActive || store.filter != .all || store.selectedTag != nil)
     }
 
     private var constraintBar: some View {
@@ -427,8 +449,12 @@ struct WorkspaceView: View {
                     .foregroundStyle(AppTheme.secondary)
                     .frame(maxWidth: .infinity, alignment: .leading)
                 Button(env.preferences.t("重置", en: "Reset")) {
-                    store.filter = .all
-                    store.reload(env: env)
+                    if store.selectedTag != nil {
+                        clearTagFilter()
+                    } else {
+                        store.filter = .all
+                        store.reload(env: env)
+                    }
                 }
                 .font(.system(size: 12, weight: .bold))
                 .foregroundStyle(AppTheme.slate)
@@ -454,6 +480,7 @@ struct WorkspaceView: View {
     }
 
     private var filterLabel: String {
+        if let selectedTag = store.selectedTag { return "#\(selectedTag)" }
         switch store.filter {
         case .pinned: return "置顶"
         case .tagged: return "有标签"
@@ -463,12 +490,18 @@ struct WorkspaceView: View {
     }
 
     private var filterLabelEN: String {
+        if let selectedTag = store.selectedTag { return "#\(selectedTag)" }
         switch store.filter {
         case .pinned: return "Pinned"
         case .tagged: return "Tagged"
         case .untagged: return "Untagged"
         case .all: return "All"
         }
+    }
+
+    private func clearTagFilter() {
+        store.clearTagFilter()
+        store.reload(env: env)
     }
 
     private func filterChip(active: Bool, systemImage: String, label: String, action: @escaping () -> Void) -> some View {
@@ -512,10 +545,14 @@ struct WorkspaceView: View {
                 bottomNavItem(
                     systemImage: "house.fill",
                     label: env.preferences.t("首页", en: "Home"),
-                    active: true
+                    active: !showSettings
                 ) {
+                    showSettings = false
                     withAnimation(Motion.chip) {
                         path = NavigationPath()
+                    }
+                    if store.selectedTag != nil {
+                        clearTagFilter()
                     }
                 }
 
@@ -561,7 +598,7 @@ struct WorkspaceView: View {
                 bottomNavItem(
                     systemImage: "person",
                     label: env.preferences.t("我的", en: "Me"),
-                    active: false
+                    active: showSettings
                 ) {
                     showSettings = true
                 }
@@ -588,13 +625,20 @@ struct WorkspaceView: View {
         Button(action: action) {
             VStack(spacing: 4) {
                 Image(systemName: systemImage)
-                    .font(.system(size: 20, weight: .regular))
-                    .foregroundStyle(active ? AppTheme.title : AppTheme.secondary)
+                    .font(.system(size: 20, weight: active ? .semibold : .regular))
+                    .foregroundStyle(active ? AppTheme.accentAction : AppTheme.secondary)
                 Text(label)
                     .font(AppTheme.bottomNavFont)
                     .foregroundStyle(active ? AppTheme.title : AppTheme.secondary)
             }
-            .frame(minWidth: 58, minHeight: MobileUIMetrics.minimumTouchTarget)
+            .frame(width: 80, height: 48)
+            .overlay(alignment: .top) {
+                if active {
+                    Capsule()
+                        .fill(AppTheme.accentAction)
+                        .frame(width: 20, height: 3)
+                }
+            }
         }
         .buttonStyle(.plain)
         .frame(maxWidth: .infinity)
@@ -734,26 +778,67 @@ struct WorkspaceView: View {
             incomingClipURL = sourceURL
         } else {
             Task {
-                let draft = await WebClipper.build(sourceURL)
+                let draft = await WebClipper.build(sourceURL, labels: webClipLabels)
                 finishClip(draft)
             }
         }
     }
 
     private func finishRenderedClip(_ page: RenderedWebPage, sourceURL: URL) {
-        finishClip(WebClipper.buildRendered(sourceURL, page: page))
+        finishClip(WebClipper.buildRendered(sourceURL, page: page, labels: webClipLabels))
+    }
+
+    private var webClipLabels: WebClipLabels {
+        WebClipLabels(
+            sourceLabel: env.preferences.t("来源", en: "Source", ja: "出典"),
+            capturedAtLabel: env.preferences.t("剪藏时间", en: "Captured at", ja: "取り込み日時"),
+            unavailableBody: env.preferences.t(
+                "正文暂时无法抓取，来源链接已保留，可稍后重试。",
+                en: "Could not extract the page text. The source link is kept so you can retry later.",
+                ja: "本文を取り込めませんでした。出典リンクは残してあるので、あとからやり直せます。"
+            ),
+            fallbackTitle: env.preferences.t("网页剪藏", en: "Web clip", ja: "ウェブクリップ"),
+            imageAlt: env.preferences.t("图片", en: "Image", ja: "画像"),
+            usesFullwidthColon: env.preferences.uiLanguage == .chinese
+        )
+    }
+
+    private func localizedCaptureFailure(_ message: String) -> String {
+        switch message {
+        case "微信文章加载超时。":
+            return env.preferences.t(
+                "微信文章加载超时。",
+                en: "The WeChat article took too long to load.",
+                ja: "WeChat 記事の読み込みがタイムアウトしました。"
+            )
+        case "页面加载完成，但没有找到可剪藏的正文。":
+            return env.preferences.t(
+                "页面加载完成，但没有找到可剪藏的正文。",
+                en: "The page finished loading, but there was no article text to clip.",
+                ja: "ページの読み込みは終わりましたが、取り込める本文がありません。"
+            )
+        case "没有找到可剪藏的正文。":
+            return env.preferences.t(
+                "没有找到可剪藏的正文。",
+                en: "No article text was found to clip.",
+                ja: "取り込める本文が見つかりません。"
+            )
+        default:
+            return message
+        }
     }
 
     private func failRenderedClip(_ message: String, sourceURL: URL) {
         incomingClipURL = nil
         Task {
-            let draft = await WebClipper.build(sourceURL)
+            let draft = await WebClipper.build(sourceURL, labels: webClipLabels)
             isImportingShare = false
             shareImportAlert = ShareImportAlert(
-                title: env.preferences.t("正文剪藏失败", en: "Article extraction failed"),
-                message: message + env.preferences.t(
-                    " 已保留文章链接，你可以稍后重新分享重试。",
-                    en: " The article link was preserved; you can share it again later to retry."
+                title: env.preferences.t("正文剪藏失败", en: "Article extraction failed", ja: "本文を取り込めませんでした"),
+                message: localizedCaptureFailure(message) + " " + env.preferences.t(
+                    "已保留文章链接，你可以稍后重新分享重试。",
+                    en: "The article link was kept. Share it again later to retry.",
+                    ja: "記事リンクは残してあります。あとから再共有してやり直せます。"
                 ),
                 draft: draft
             )

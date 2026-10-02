@@ -1,4 +1,4 @@
-import { ARCHITECTURE_RESOURCE_ICONS } from "@edgeever/shared";
+import { ARCHITECTURE_RESOURCE_ICONS, INFOGRAPHIC_NOTE_TEMPLATES, TABLE_FIELD_TYPES } from "@edgeever/shared";
 
 const DIAGRAM_IR_NODE_TYPES = [
   "topic",
@@ -18,6 +18,131 @@ const DIAGRAM_IR_NODE_TYPES = [
   "boundary",
 ] as const;
 
+const diagramNodeProperties = {
+  id: { type: "string", minLength: 1, maxLength: 100 },
+  label: { type: "string", maxLength: 500 },
+  type: { type: "string", enum: [...DIAGRAM_IR_NODE_TYPES] },
+  parentId: { type: "string", minLength: 1, maxLength: 100 },
+  resourceIcon: { type: "string", enum: [...ARCHITECTURE_RESOURCE_ICONS] },
+};
+
+const diagramNodeSchema = {
+  type: "object",
+  required: ["id", "label"],
+  additionalProperties: false,
+  properties: diagramNodeProperties,
+};
+
+const diagramEdgeProperties = {
+  source: { type: "string", minLength: 1, maxLength: 100 },
+  target: { type: "string", minLength: 1, maxLength: 100 },
+  label: { type: "string", maxLength: 500 },
+  type: { type: "string", enum: ["dependency", "request", "async", "data"] },
+  bidirectional: { type: "boolean" },
+};
+
+const diagramEdgeSchema = {
+  type: "object",
+  required: ["source", "target"],
+  additionalProperties: false,
+  properties: diagramEdgeProperties,
+};
+
+const mutableDiagramEdgeSchema = {
+  ...diagramEdgeSchema,
+  properties: {
+    id: { type: "string", minLength: 1, maxLength: 100 },
+    ...diagramEdgeProperties,
+  },
+};
+
+const tableFieldSchema = {
+  type: "object",
+  required: ["name", "type"],
+  additionalProperties: false,
+  properties: {
+    name: { type: "string", minLength: 1, maxLength: 80 },
+    type: { type: "string", enum: [...TABLE_FIELD_TYPES] },
+    options: { type: "array", maxItems: 40, items: { type: "string", minLength: 1, maxLength: 80 } },
+  },
+};
+
+const infographicLabel = {
+  type: "object",
+  additionalProperties: false,
+  required: ["label"],
+  properties: {
+    label: { type: "string", minLength: 1, maxLength: 160 },
+    desc: { type: "string", maxLength: 240 },
+  },
+};
+
+const infographicChild = {
+  type: "object",
+  additionalProperties: false,
+  required: ["label"],
+  properties: {
+    label: { type: "string", minLength: 1, maxLength: 160 },
+    desc: { type: "string", maxLength: 240 },
+    children: { type: "array", maxItems: 8, items: infographicLabel },
+  },
+};
+
+const infographicDataSchema = {
+  type: "object",
+  additionalProperties: false,
+  required: ["title"],
+  properties: {
+    title: { type: "string", minLength: 1, maxLength: 160 },
+    desc: { type: "string", maxLength: 240 },
+    values: {
+      type: "array",
+      maxItems: 12,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["label", "value"],
+        properties: {
+          label: { type: "string", minLength: 1, maxLength: 80 },
+          value: { type: "number" },
+        },
+      },
+    },
+    compares: { type: "array", maxItems: 4, items: infographicChild },
+    sequences: { type: "array", maxItems: 12, items: infographicLabel },
+    lists: { type: "array", maxItems: 12, items: infographicLabel },
+    root: infographicChild,
+    nodes: {
+      type: "array",
+      maxItems: 12,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["id", "label"],
+        properties: {
+          id: { type: "string", minLength: 1, maxLength: 40 },
+          label: { type: "string", minLength: 1, maxLength: 80 },
+          desc: { type: "string", maxLength: 240 },
+        },
+      },
+    },
+    relations: {
+      type: "array",
+      maxItems: 24,
+      items: {
+        type: "object",
+        additionalProperties: false,
+        required: ["from", "to"],
+        properties: {
+          from: { type: "string", minLength: 1, maxLength: 40 },
+          to: { type: "string", minLength: 1, maxLength: 40 },
+          direction: { type: "string", maxLength: 20 },
+        },
+      },
+    },
+  },
+};
+
 const MCP_TOOL_DEFINITIONS = [
   {
     name: "get_current_user",
@@ -31,7 +156,7 @@ const MCP_TOOL_DEFINITIONS = [
   },
   {
     name: "search_memos",
-    description: "Search active EdgeEver memos by text, tag, notebook, time range, pin state, or resource presence.",
+    description: "Search active EdgeEver memos by text, tag, notebook, time range, pin state, or resource presence. query is optional. For recently created or added notes, pass createdAfter and omit query; do not put this week/最近/新增 in query. Time bounds accept YYYY-MM-DD or ISO date-time.",
     inputSchema: {
       type: "object",
       additionalProperties: false,
@@ -39,10 +164,10 @@ const MCP_TOOL_DEFINITIONS = [
         query: { type: "string" },
         notebookId: { type: "string" },
         tags: { type: "array", items: { type: "string" } },
-        createdAfter: { type: "string", format: "date-time" },
-        createdBefore: { type: "string", format: "date-time" },
-        updatedAfter: { type: "string", format: "date-time" },
-        updatedBefore: { type: "string", format: "date-time" },
+        createdAfter: { type: "string", description: "ISO 8601 date (YYYY-MM-DD) or date-time. Date-only means 00:00:00.000Z." },
+        createdBefore: { type: "string", description: "ISO 8601 date (YYYY-MM-DD) or date-time. Date-only means 23:59:59.999Z." },
+        updatedAfter: { type: "string", description: "ISO 8601 date (YYYY-MM-DD) or date-time. Date-only means 00:00:00.000Z." },
+        updatedBefore: { type: "string", description: "ISO 8601 date (YYYY-MM-DD) or date-time. Date-only means 23:59:59.999Z." },
         isPinned: { type: "boolean" },
         hasResources: { type: "boolean" },
         limit: { type: "integer", minimum: 1, maximum: 50 },
@@ -95,6 +220,114 @@ const MCP_TOOL_DEFINITIONS = [
     },
   },
   {
+    name: "get_table_records",
+    description: "Read the fields and a page of records from one structured table memo. Use field IDs and record IDs for subsequent writes. Returns the memo revision for optimistic concurrency.",
+    inputSchema: {
+      type: "object", required: ["memoId"], additionalProperties: false,
+      properties: {
+        memoId: { type: "string", minLength: 1 },
+        recordId: { type: "string", minLength: 1 },
+        offset: { type: "integer", minimum: 0 },
+        limit: { type: "integer", minimum: 1, maximum: 100 },
+      },
+    },
+  },
+  {
+    name: "create_table_memo",
+    description: "Create an editable structured table memo from a field plan. Infer field names and types from the user's request, then pass explicit fields. The table starts empty; add_table_record can populate it. Select fields require options.",
+    inputSchema: {
+      type: "object", required: ["notebookId", "title", "fields"], additionalProperties: false,
+      properties: {
+        notebookId: { type: "string", minLength: 1 },
+        title: { type: "string", minLength: 1, maxLength: 160 },
+        tags: { type: "array", maxItems: 100, items: { type: "string" } },
+        fields: { type: "array", minItems: 1, maxItems: 40, items: tableFieldSchema },
+      },
+    },
+  },
+  {
+    name: "update_table_schema",
+    description: "Apply field changes to one structured table memo. First use dryRun to preview changedCellCount and removedAttachmentCount. If existing cell values would change, pass allowDataChanges=true to execute. Operations run in order and use stable field IDs from get_table_records.",
+    inputSchema: {
+      type: "object", required: ["memoId", "expectedRevision", "operations"], additionalProperties: false,
+      properties: {
+        memoId: { type: "string", minLength: 1 },
+        expectedRevision: { type: "integer", minimum: 0 },
+        dryRun: { type: "boolean" },
+        allowDataChanges: { type: "boolean" },
+        operations: {
+          type: "array", minItems: 1, maxItems: 40,
+          items: {
+            type: "object", required: ["op"], additionalProperties: false,
+            properties: {
+              op: { type: "string", enum: ["add_field", "update_field", "remove_field"] },
+              fieldId: { type: "string", minLength: 1 },
+              field: tableFieldSchema,
+              changes: {
+                type: "object", minProperties: 1, additionalProperties: false,
+                properties: tableFieldSchema.properties,
+              },
+            },
+          },
+        },
+      },
+    },
+  },
+  {
+    name: "add_table_record",
+    description: "Add one record to an existing structured table memo. cells maps field IDs to values; attachment fields accept arrays of resource IDs already uploaded to this memo. Pass the revision returned by get_table_records.",
+    inputSchema: {
+      type: "object", required: ["memoId", "expectedRevision", "cells"], additionalProperties: false,
+      properties: {
+        memoId: { type: "string", minLength: 1 },
+        expectedRevision: { type: "integer", minimum: 0 },
+        cells: { type: "object", additionalProperties: true },
+      },
+    },
+  },
+  {
+    name: "update_table_record",
+    description: "Update selected cells of one record in a structured table memo. Other cells remain unchanged. Attachment fields accept arrays of resource IDs already uploaded to this memo.",
+    inputSchema: {
+      type: "object", required: ["memoId", "recordId", "expectedRevision", "cells"], additionalProperties: false,
+      properties: {
+        memoId: { type: "string", minLength: 1 },
+        recordId: { type: "string", minLength: 1 },
+        expectedRevision: { type: "integer", minimum: 0 },
+        cells: { type: "object", minProperties: 1, additionalProperties: true },
+      },
+    },
+  },
+  {
+    name: "delete_table_record",
+    description: "Delete one record from a structured table memo by record ID. This also releases attachments used only by the removed record.",
+    inputSchema: {
+      type: "object", required: ["memoId", "recordId", "expectedRevision"], additionalProperties: false,
+      properties: {
+        memoId: { type: "string", minLength: 1 },
+        recordId: { type: "string", minLength: 1 },
+        expectedRevision: { type: "integer", minimum: 0 },
+      },
+    },
+  },
+  {
+    name: "create_infographic_memo",
+    description:
+      "Create an AntV infographic note (信息图). Use this for 信息图, infographic, 占比, 构成, 饼图, 柱状图, 折线图, 对比, 四象限, 时间线, and a process infographic. Do not use create_diagram_memo, create_memo, or a mind map. Use chart-pie-donut-plain-text with data.values for a share or 占比; chart-column-simple for columns; chart-line-plain-text for a trend; compare-binary-horizontal-badge-card-vs for two subjects with matched children; compare-quadrant-quarter-simple-card for four quadrants; sequence-timeline-rounded-rect-node for a timeline; sequence-steps-simple for steps; list-grid-simple for a parallel list; hierarchy-tree-tech-style-capsule-item for a tree; relation-network-simple-circle-node for a network. Fill only the data array that matches the template. data.title is the note title. If the user did not supply the figures, say in data.desc that the values are illustrative and are not an official disclosure. 思维导图, 流程图, and 架构图 still use create_diagram_memo.",
+    inputSchema: {
+      type: "object",
+      required: ["notebookId", "template", "data"],
+      additionalProperties: false,
+      properties: {
+        notebookId: { type: "string", minLength: 1 },
+        title: { type: "string", maxLength: 160 },
+        template: { type: "string", enum: [...INFOGRAPHIC_NOTE_TEMPLATES] },
+        data: infographicDataSchema,
+        tags: { type: "array", maxItems: 100, items: { type: "string" } },
+      },
+    },
+  },
+  {
     name: "create_diagram_memo",
     description:
       "Create an editable visual diagram memo from a semantic graph; EdgeEver generates node sizes, coordinates, edge IDs, and a deterministic layout. For mind maps, omit node type and use parentId for hierarchy. Flowchart node types are process, decision, start, or end. Architecture node types are client, frontend, service, database, storage, queue, security, external, or boundary; boundary nodes may contain nodes through parentId but cannot be edge endpoints.",
@@ -106,7 +339,8 @@ const MCP_TOOL_DEFINITIONS = [
         notebookId: { type: "string", minLength: 1 },
         title: { type: "string", maxLength: 160 },
         kind: { type: "string", enum: ["mind-map", "flowchart", "architecture"] },
-        theme: { type: "string", enum: ["brand", "ocean", "ink"] },
+        theme: { type: "string", enum: ["plain", "brand", "sun", "wa", "island", "rose", "mint", "cosmos", "tea", "naive", "macaron", "ocean", "ink", "classic", "paper"] },
+        structure: { type: "string", enum: ["map", "line", "capsule", "box", "circle", "ellipse", "hexagon", "logic", "tree", "brace", "org", "timeline", "fishbone"] },
         layout: {
           type: "object",
           additionalProperties: false,
@@ -119,34 +353,12 @@ const MCP_TOOL_DEFINITIONS = [
           type: "array",
           minItems: 1,
           maxItems: 200,
-          items: {
-            type: "object",
-            required: ["id", "label"],
-            additionalProperties: false,
-            properties: {
-              id: { type: "string", minLength: 1, maxLength: 100 },
-              label: { type: "string", maxLength: 500 },
-              type: { type: "string", enum: [...DIAGRAM_IR_NODE_TYPES] },
-              parentId: { type: "string", minLength: 1, maxLength: 100 },
-              resourceIcon: { type: "string", enum: [...ARCHITECTURE_RESOURCE_ICONS] },
-            },
-          },
+          items: diagramNodeSchema,
         },
         edges: {
           type: "array",
           maxItems: 400,
-          items: {
-            type: "object",
-            required: ["source", "target"],
-            additionalProperties: false,
-            properties: {
-              source: { type: "string", minLength: 1, maxLength: 100 },
-              target: { type: "string", minLength: 1, maxLength: 100 },
-              label: { type: "string", maxLength: 500 },
-              type: { type: "string", enum: ["dependency", "request", "async", "data"] },
-              bidirectional: { type: "boolean" },
-            },
-          },
+          items: diagramEdgeSchema,
         },
       },
     },
@@ -183,76 +395,33 @@ const MCP_TOOL_DEFINITIONS = [
           minItems: 1,
           maxItems: 100,
           items: {
-            oneOf: [
-              {
-                type: "object", required: ["op", "node"], additionalProperties: false,
+            type: "object",
+            required: ["op"],
+            additionalProperties: false,
+            properties: {
+              op: {
+                type: "string",
+                enum: ["add_node", "update_node", "remove_node", "add_edge", "update_edge", "remove_edge"],
+              },
+              node: diagramNodeSchema,
+              nodeId: { type: "string", minLength: 1 },
+              edge: mutableDiagramEdgeSchema,
+              edgeId: { type: "string", minLength: 1 },
+              changes: {
+                type: "object",
+                additionalProperties: false,
                 properties: {
-                  op: { const: "add_node" },
-                  node: {
-                    type: "object", required: ["id", "label"], additionalProperties: false,
-                    properties: {
-                      id: { type: "string", minLength: 1, maxLength: 100 },
-                      label: { type: "string", maxLength: 500 },
-                      type: { type: "string", enum: [...DIAGRAM_IR_NODE_TYPES] },
-                      parentId: { type: "string", minLength: 1, maxLength: 100 },
-                      resourceIcon: { type: "string", enum: [...ARCHITECTURE_RESOURCE_ICONS] },
-                    },
-                  },
+                  label: { type: "string", maxLength: 500 },
+                  type: { type: "string", enum: [...DIAGRAM_IR_NODE_TYPES] },
+                  parentId: { type: "string", maxLength: 100 },
+                  resourceIcon: { type: "string", enum: [...ARCHITECTURE_RESOURCE_ICONS] },
+                  source: { type: "string", minLength: 1, maxLength: 100 },
+                  target: { type: "string", minLength: 1, maxLength: 100 },
+                  bidirectional: { type: "boolean" },
                 },
               },
-              {
-                type: "object", required: ["op", "nodeId", "changes"], additionalProperties: false,
-                properties: {
-                  op: { const: "update_node" }, nodeId: { type: "string", minLength: 1 },
-                  changes: {
-                    type: "object", minProperties: 1, additionalProperties: false,
-                    properties: {
-                      label: { type: "string", maxLength: 500 },
-                      type: { type: "string", enum: [...DIAGRAM_IR_NODE_TYPES] },
-                      parentId: { type: ["string", "null"], maxLength: 100 },
-                      resourceIcon: { type: ["string", "null"], enum: [...ARCHITECTURE_RESOURCE_ICONS, null] },
-                    },
-                  },
-                },
-              },
-              {
-                type: "object", required: ["op", "nodeId"], additionalProperties: false,
-                properties: { op: { const: "remove_node" }, nodeId: { type: "string", minLength: 1 }, cascade: { type: "boolean" } },
-              },
-              {
-                type: "object", required: ["op", "edge"], additionalProperties: false,
-                properties: {
-                  op: { const: "add_edge" },
-                  edge: {
-                    type: "object", required: ["source", "target"], additionalProperties: false,
-                    properties: {
-                      id: { type: "string", minLength: 1, maxLength: 100 },
-                      source: { type: "string", minLength: 1, maxLength: 100 }, target: { type: "string", minLength: 1, maxLength: 100 },
-                      label: { type: "string", maxLength: 500 }, type: { type: "string", enum: ["dependency", "request", "async", "data"] },
-                      bidirectional: { type: "boolean" },
-                    },
-                  },
-                },
-              },
-              {
-                type: "object", required: ["op", "edgeId", "changes"], additionalProperties: false,
-                properties: {
-                  op: { const: "update_edge" }, edgeId: { type: "string", minLength: 1 },
-                  changes: {
-                    type: "object", minProperties: 1, additionalProperties: false,
-                    properties: {
-                      source: { type: "string", minLength: 1, maxLength: 100 }, target: { type: "string", minLength: 1, maxLength: 100 },
-                      label: { type: ["string", "null"], maxLength: 500 }, type: { type: ["string", "null"], enum: ["dependency", "request", "async", "data", null] },
-                      bidirectional: { type: ["boolean", "null"] },
-                    },
-                  },
-                },
-              },
-              {
-                type: "object", required: ["op", "edgeId"], additionalProperties: false,
-                properties: { op: { const: "remove_edge" }, edgeId: { type: "string", minLength: 1 } },
-              },
-            ],
+              cascade: { type: "boolean" },
+            },
           },
         },
       },
@@ -654,7 +823,6 @@ const MCP_TOOL_DEFINITIONS = [
       type: "object",
       required: ["name"],
       additionalProperties: false,
-      anyOf: [{ required: ["memoId"] }, { required: ["contentMarkdown"] }],
       properties: {
         name: { type: "string", minLength: 1, maxLength: 160 },
         description: { type: "string", maxLength: 500 },
@@ -672,13 +840,6 @@ const MCP_TOOL_DEFINITIONS = [
       type: "object",
       required: ["templateId"],
       additionalProperties: false,
-      anyOf: [
-        { required: ["name"] },
-        { required: ["description"] },
-        { required: ["title"] },
-        { required: ["contentMarkdown"] },
-        { required: ["tags"] },
-      ],
       properties: {
         templateId: { type: "string", minLength: 1 },
         name: { type: "string", minLength: 1, maxLength: 160 },
@@ -762,13 +923,6 @@ const MCP_TOOL_DEFINITIONS = [
       type: "object",
       required: ["instructionId"],
       additionalProperties: false,
-      anyOf: [
-        { required: ["name"] },
-        { required: ["description"] },
-        { required: ["instruction"] },
-        { required: ["parameterKind"] },
-        { required: ["resultMode"] },
-      ],
       properties: {
         instructionId: { type: "string", minLength: 1 },
         name: { type: "string", minLength: 1, maxLength: 80 },
@@ -810,6 +964,7 @@ const READ_ONLY_MCP_TOOLS = new Set([
   "search_memos",
   "list_memos",
   "get_memo",
+  "get_table_records",
   "get_diagram",
   "list_memo_resources",
   "list_resources",
@@ -827,7 +982,9 @@ const READ_ONLY_MCP_TOOLS = new Set([
 ]);
 const NON_DESTRUCTIVE_MCP_TOOLS = new Set([
   "create_memo",
+  "create_table_memo",
   "create_diagram_memo",
+  "create_infographic_memo",
   "import_memos",
   "restore_memos",
   "move_memos",

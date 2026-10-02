@@ -11,7 +11,6 @@ import {
   DialogTitle,
 } from "@/components/ui/dialog";
 import { Input } from "@/components/ui/input";
-import { sanitizeAndScopeCss } from "@/lib/css-sandbox";
 import {
   CustomEditorThemeFileError,
   DEFAULT_CUSTOM_LIGHT_COLORS,
@@ -139,7 +138,7 @@ export const CustomEditorThemeDialog = ({
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-[440px] sm:max-w-[500px] max-h-[95vh] overflow-y-auto p-5">
         <DialogHeader className="space-y-1">
-          <DialogTitle className="text-base">{t("settings.customEditorTheme.title")}</DialogTitle>
+          <DialogTitle>{t("settings.customEditorTheme.title")}</DialogTitle>
           <DialogDescription className="text-xs">{t("settings.customEditorTheme.description")}</DialogDescription>
         </DialogHeader>
         <div className="grid gap-3 mt-1.5">
@@ -161,7 +160,7 @@ export const CustomEditorThemeDialog = ({
               onClick={() => setActiveMode("light")}
               className={`flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-medium transition-all ${
                 activeMode === "light"
-                  ? "bg-white text-emerald-800 shadow-sm"
+                  ? "bg-card font-semibold text-slate-950 shadow-sm"
                   : "text-slate-500 hover:text-slate-800"
               }`}
             >
@@ -173,7 +172,7 @@ export const CustomEditorThemeDialog = ({
               onClick={() => setActiveMode("dark")}
               className={`flex flex-1 items-center justify-center gap-1.5 rounded-md py-1 text-xs font-medium transition-all ${
                 activeMode === "dark"
-                  ? "bg-white text-emerald-800 shadow-sm"
+                  ? "bg-card font-semibold text-slate-950 shadow-sm"
                   : "text-slate-500 hover:text-slate-800"
               }`}
             >
@@ -192,7 +191,7 @@ export const CustomEditorThemeDialog = ({
                     type="color"
                     value={/^#[0-9a-f]{6}$/i.test(activeColors[key]) ? activeColors[key] : defaultColors[key]}
                     onChange={(event) => updateColor(key as keyof ThemeColors, event.target.value)}
-                    className="h-7 w-7 cursor-pointer rounded border border-slate-200 bg-white p-0.5"
+                    className="h-7 w-7 cursor-pointer rounded border border-slate-200 bg-card p-0.5"
                     aria-label={t(labelKey)}
                   />
                   <Input
@@ -200,14 +199,14 @@ export const CustomEditorThemeDialog = ({
                     aria-label={t(labelKey)}
                     onChange={(event) => updateColor(key as keyof ThemeColors, event.target.value)}
                     maxLength={7}
-                    className="h-7 w-20 px-1.5 font-mono text-[11px]"
+                    className="h-7 w-20 px-1.5 font-mono text-xs"
                   />
                 </div>
               </div>
             ))}
           </div>
           {activeContrastIssues.length > 0 ? (
-            <p className="rounded-md bg-amber-50 px-2.5 py-2 text-[11px] leading-4 text-amber-800">
+            <p className="rounded-md bg-amber-50 px-2.5 py-2 text-xs leading-4 text-amber-800">
               {t("settings.customEditorTheme.contrastWarning", {
                 mode: t(`settings.customEditorTheme.modes.${activeMode}`),
                 fields: new Intl.ListFormat(i18n.resolvedLanguage ?? i18n.language, { type: "conjunction" })
@@ -215,19 +214,7 @@ export const CustomEditorThemeDialog = ({
               })}
             </p>
           ) : null}
-          {importError ? <p className="rounded-md bg-red-50 px-2.5 py-2 text-[11px] leading-4 text-red-700" role="alert">{importError}</p> : null}
-
-          {/* Custom CSS Textarea */}
-          <label className="grid gap-1 text-xs font-semibold text-slate-700">
-            {t("settings.customEditorTheme.customCss", "Custom CSS (高级自定义样式表)")}
-            <textarea
-              value={draft.customCss || ""}
-              onChange={(event) => setDraft((current) => ({ ...current, customCss: event.target.value }))}
-              placeholder="e.g. h1 { font-style: italic; } blockquote { border-radius: 6px; }"
-              className="min-h-[72px] w-full rounded-md border border-slate-200 bg-white p-2 font-mono text-[11px] focus:border-emerald-500 focus:outline-none"
-              maxLength={2000}
-            />
-          </label>
+          {importError ? <p className="rounded-md bg-red-50 px-2.5 py-2 text-xs leading-4 text-red-700" role="alert">{importError}</p> : null}
 
           {/* Preview Panel */}
           <div
@@ -244,9 +231,6 @@ export const CustomEditorThemeDialog = ({
                 padding: "0.75rem",
               }}
             >
-              {draft.customCss && (
-                <style dangerouslySetInnerHTML={{ __html: sanitizeAndScopeCss(draft.customCss) }} />
-              )}
               <div className="text-sm font-semibold mb-0.5" style={{ color: activeColors.heading }}>
                 {t("settings.customEditorTheme.previewTitle")}
               </div>

@@ -1,7 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import {
+  createDefaultNotebookRows,
   createWorkspaceDefaultSeedStatements,
   ensureUserWorkspace,
+  isInboxNotebook,
+  workspaceInboxId,
 } from "./workspace-provisioning.ts";
 
 const statement = (sql, calls) => ({
@@ -20,6 +23,15 @@ const statement = (sql, calls) => ({
 });
 
 describe("workspace provisioning", () => {
+  test("uses a stable workspace-scoped inbox id", () => {
+    expect(workspaceInboxId("ws_1")).toBe("ws_1_inbox");
+    expect(createDefaultNotebookRows("ws_1")[0]).toMatchObject({
+      id: "ws_1_inbox",
+      slug: "inbox",
+    });
+    expect(isInboxNotebook({ id: "ws_1_inbox", slug: "shou-ji-xiang" }, "ws_1")).toBe(true);
+  });
+
   test("does not restore defaults while resolving an existing workspace", async () => {
     const calls = [];
     let batchCount = 0;
@@ -59,5 +71,37 @@ describe("workspace provisioning", () => {
     expect(calls[0].values).toContain("Quick Spark");
     expect(calls.filter((call) => call.sql.includes("INSERT OR IGNORE INTO memo_templates"))).toHaveLength(5);
     expect(calls.some((call) => call.sql.includes("INSERT OR IGNORE INTO ai_prompt_templates"))).toBe(true);
+  });
+
+  test("seeds Japanese templates when Accept-Language prefers Japanese", () => {
+    const calls = [];
+    const db = {
+      prepare: (sql) => statement(sql, calls),
+    };
+
+    createWorkspaceDefaultSeedStatements(
+      db,
+      "ws_ja",
+      "2026-08-14T00:00:00.000Z",
+      "ja-JP,ja;q=0.9",
+    );
+
+    expect(calls[0].values).toContain("ひらめきメモ");
+  });
+
+  test("seeds English templates when Accept-Language is unmatched", () => {
+    const calls = [];
+    const db = {
+      prepare: (sql) => statement(sql, calls),
+    };
+
+    createWorkspaceDefaultSeedStatements(
+      db,
+      "ws_fr",
+      "2026-08-14T00:00:00.000Z",
+      "fr-FR,fr;q=0.9",
+    );
+
+    expect(calls[0].values).toContain("Quick Spark");
   });
 });

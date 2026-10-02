@@ -18,6 +18,7 @@ import {
 import { classifyLoginError, getLoginProblemMessageKey } from "@/lib/login-error";
 import { EVERNOTE_MIGRATION_PATH } from "@/lib/routes";
 import { isBrowserOffline } from "@/lib/network-status";
+import { syncPublishedNoteBodyFont } from "@/lib/published-note-body-font";
 import type { AuthSession } from "@edgeever/shared";
 
 const EvernoteImportGuidePane = lazy(() =>
@@ -26,6 +27,7 @@ const EvernoteImportGuidePane = lazy(() =>
 const LoginScreen = lazy(() => import("@/components/LoginScreen").then((module) => ({ default: module.LoginScreen })));
 const WorkspaceApp = lazy(() => import("@/components/WorkspaceApp").then((module) => ({ default: module.WorkspaceApp })));
 const PublicSharePage = lazy(() => import("@/components/PublicSharePage").then((module) => ({ default: module.PublicSharePage })));
+const PublicTableFormPage = lazy(() => import("@/components/PublicTableFormPage").then((module) => ({ default: module.PublicTableFormPage })));
 
 const AuthLoadingScreen = ({ title = "EdgeEver", detail }: { title?: string; detail?: string }) => (
   <div className="flex h-[100dvh] items-center justify-center bg-slate-50 px-6 text-center text-slate-700">
@@ -82,6 +84,11 @@ const AuthenticatedWorkspace = () => {
   });
 
   const desktopAccountId = sessionQuery.data?.authenticated ? sessionQuery.data.user?.id ?? null : null;
+
+  useEffect(() => {
+    if (!desktopAccountId) return;
+    void syncPublishedNoteBodyFont();
+  }, [desktopAccountId]);
 
   useEffect(() => {
     if (!desktopBridge?.isAvailable || sessionQuery.isLoading) return;
@@ -172,7 +179,7 @@ const AuthenticatedWorkspace = () => {
     if (desktopScopeError) {
       return (
         <main className="flex h-[100dvh] items-center justify-center bg-slate-50 px-4 text-slate-900">
-          <section className="w-full max-w-md rounded-xl border border-rose-200 bg-white p-6 shadow-sm">
+          <section className="w-full max-w-md rounded-xl border border-rose-200 bg-card p-6 shadow-sm">
             <p className="text-sm leading-6 text-rose-800">{t("login.desktopScopeUnavailable")}</p>
             <Button className="mt-4" variant="outline" onClick={() => setDesktopScopeAttempt((value) => value + 1)}>
               {t("login.desktopScopeRetry")}
@@ -222,6 +229,7 @@ export const App = () => {
       <PwaInstallProvider>
         <Routes>
           <Route path="/share/:token" element={<Suspense fallback={<AuthLoadingScreen />}><PublicSharePage /></Suspense>} />
+          <Route path="/form/:token" element={<Suspense fallback={<AuthLoadingScreen />}><PublicTableFormPage /></Suspense>} />
           <Route path={EVERNOTE_MIGRATION_PATH} element={<EvernoteMigrationRoute />} />
           <Route path="/" element={<AuthenticatedWorkspace />} />
           <Route path="/settings" element={<AuthenticatedWorkspace />} />
@@ -229,7 +237,6 @@ export const App = () => {
           <Route path="/plugins/:pluginId" element={<AuthenticatedWorkspace />} />
           <Route path="/templates" element={<AuthenticatedWorkspace />} />
           <Route path="/ai-prompts" element={<AuthenticatedWorkspace />} />
-          <Route path="/companion" element={<AuthenticatedWorkspace />} />
           <Route path="/execution-center" element={<AuthenticatedWorkspace />} />
           <Route path="*" element={<Navigate to="/" replace />} />
         </Routes>

@@ -1,9 +1,13 @@
-use rusqlite::Connection;
+use rusqlite::{Connection, OptionalExtension};
 use serde_json::{json, Value};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::memo::memo_value;
 use crate::{enqueue_change, markdown_doc, now_id, string_param, tags_from_json};
+
+pub(crate) fn is_inbox_notebook(id: &str, slug: Option<&str>) -> bool {
+    slug == Some("inbox") || id == "nb_inbox" || id.ends_with("_inbox")
+}
 
 pub(crate) fn list_notebooks(database: &Connection) -> Result<Value, String> {
     let mut statement = database.prepare(
@@ -65,7 +69,19 @@ pub(crate) fn create_notebook(database: &Connection, params: &Value) -> Result<V
 pub(crate) fn update_notebook(database: &Connection, params: &Value) -> Result<Value, String> {
     let notebook_id = string_param(params, "notebookId")?;
     if let Some(name) = params.get("name").and_then(Value::as_str) {
-        database.execute("UPDATE notebooks SET name = ?1, slug = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?3 AND is_deleted = 0", rusqlite::params![name, name.to_lowercase().replace(' ', "-"), notebook_id]).map_err(|e| e.to_string())?;
+        let current_slug: Option<String> = database
+            .query_row(
+                "SELECT slug FROM notebooks WHERE id = ?1",
+                [&notebook_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        let slug = if is_inbox_notebook(&notebook_id, current_slug.as_deref()) {
+            "inbox".to_owned()
+        } else {
+            name.to_lowercase().replace(' ', "-")
+        };
+        database.execute("UPDATE notebooks SET name = ?1, slug = ?2, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?3 AND is_deleted = 0", rusqlite::params![name, slug, notebook_id]).map_err(|e| e.to_string())?;
     }
     if params.get("parentId").is_some() {
         database.execute("UPDATE notebooks SET parent_id = ?1, updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?2 AND is_deleted = 0", rusqlite::params![params.get("parentId").and_then(Value::as_str), notebook_id]).map_err(|e| e.to_string())?;
@@ -78,32 +94,128 @@ pub(crate) fn update_notebook(database: &Connection, params: &Value) -> Result<V
     Ok(notebook)
 }
 
+struct ActiveNotebook {
+    id: String,
+    slug: Option<String>,
+}
+
+fn active_notebook_tree(
+    database: &Connection,
+    notebook_id: &str,
+) -> Result<Vec<ActiveNotebook>, String> {
+    let mut statement = database
+        .prepare(
+            "WITH RECURSIVE tree(id, depth) AS (
+               SELECT id, 0 FROM notebooks WHERE id = ?1
+               UNION ALL
+               SELECT n.id, tree.depth + 1
+               FROM notebooks n
+               INNER JOIN tree ON n.parent_id = tree.id
+               WHERE n.is_deleted = 0
+             )
+             SELECT n.id, n.slug
+             FROM tree
+             INNER JOIN notebooks n ON n.id = tree.id
+             WHERE n.is_deleted = 0
+             ORDER BY tree.depth DESC, n.id",
+        )
+        .map_err(|e| e.to_string())?;
+    let rows = statement
+        .query_map([notebook_id], |row| {
+            Ok(ActiveNotebook {
+                id: row.get(0)?,
+                slug: row.get(1)?,
+            })
+        })
+        .map_err(|e| e.to_string())?;
+    rows.collect::<Result<Vec<_>, _>>()
+        .map_err(|e| e.to_string())
+}
+
 pub(crate) fn delete_notebook(database: &Connection, params: &Value) -> Result<Value, String> {
     let notebook_id = string_param(params, "notebookId")?;
-    let child_count: i64 = database
+    let current_slug: Option<Option<String>> = database
         .query_row(
-            "SELECT COUNT(*) FROM notebooks WHERE parent_id = ?1 AND is_deleted = 0",
+            "SELECT slug FROM notebooks WHERE id = ?1",
             [&notebook_id],
             |row| row.get(0),
         )
+        .optional()
         .map_err(|e| e.to_string())?;
+    let Some(current_slug) = current_slug else {
+        return Err(format!("Notebook not found: {notebook_id}"));
+    };
+    if is_inbox_notebook(&notebook_id, current_slug.as_deref()) {
+        return Err("inbox_not_deletable".to_owned());
+    }
+
+    let tree = active_notebook_tree(database, &notebook_id)?;
+    if tree.is_empty() {
+        let exists: bool = database
+            .query_row(
+                "SELECT EXISTS(SELECT 1 FROM notebooks WHERE id = ?1)",
+                [&notebook_id],
+                |row| row.get(0),
+            )
+            .map_err(|e| e.to_string())?;
+        if !exists {
+            return Err(format!("Notebook not found: {notebook_id}"));
+        }
+        return Ok(json!({ "ok": true }));
+    }
+    if tree
+        .iter()
+        .any(|notebook| is_inbox_notebook(&notebook.id, notebook.slug.as_deref()))
+    {
+        return Err("inbox_not_deletable".to_owned());
+    }
+
     let memo_count: i64 = database
         .query_row(
-            "SELECT COUNT(*) FROM memos WHERE notebook_id = ?1 AND is_deleted = 0",
+            "WITH RECURSIVE tree(id) AS (
+               SELECT id FROM notebooks WHERE id = ?1
+               UNION ALL
+               SELECT n.id FROM notebooks n
+               INNER JOIN tree ON n.parent_id = tree.id
+               WHERE n.is_deleted = 0
+             )
+             SELECT COUNT(*) FROM memos
+             WHERE is_deleted = 0 AND notebook_id IN (
+               SELECT n.id FROM notebooks n INNER JOIN tree ON tree.id = n.id WHERE n.is_deleted = 0
+             )",
             [&notebook_id],
             |row| row.get(0),
         )
         .map_err(|e| e.to_string())?;
-    if child_count > 0 || memo_count > 0 {
+    if memo_count > 0 {
         return Err("notebook_not_empty".to_owned());
     }
-    database.execute("UPDATE notebooks SET is_deleted = 1, deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'), updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now') WHERE id = ?1 AND slug <> 'inbox'", [&notebook_id]).map_err(|e| e.to_string())?;
+
+    let ids: Vec<String> = tree.iter().map(|notebook| notebook.id.clone()).collect();
+    let tx = database
+        .unchecked_transaction()
+        .map_err(|e| e.to_string())?;
+    for id in &ids {
+        tx.execute(
+            "UPDATE notebooks
+             SET is_deleted = 1,
+                 deleted_at = strftime('%Y-%m-%dT%H:%M:%fZ','now'),
+                 updated_at = strftime('%Y-%m-%dT%H:%M:%fZ','now')
+             WHERE id = ?1 AND is_deleted = 0
+               AND slug <> 'inbox' AND id <> 'nb_inbox' AND id NOT GLOB '*_inbox'",
+            [id],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    // Leaves are ordered before parents so an older server can delete one
+    // empty notebook at a time. A current server also accepts the root alone.
     enqueue_change(
-        database,
+        &tx,
         "notebook.delete",
         &notebook_id,
-        &json!({ "notebookId": notebook_id }),
+        &json!({ "notebookId": notebook_id, "notebookIds": ids }),
     )?;
+    tx.commit().map_err(|e| e.to_string())?;
     Ok(json!({ "ok": true }))
 }
 

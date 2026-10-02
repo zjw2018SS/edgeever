@@ -22,7 +22,7 @@ import {
   writeMobileMemoDraft,
   type MobileMemoDraft,
 } from "../lib/mobile-drafts";
-import { useMobileLocale } from "../lib/mobile-locale";
+import { localizeMissingNotebookName, useMobileLocale } from "../lib/mobile-locale";
 import { useSession } from "../lib/session";
 import { queueMobileMemoCreate, queueMobileMemoUpdate } from "../lib/sync-queue";
 import { createMobileDataScope, upsertLocalMemo } from "../lib/local-mirror";
@@ -126,7 +126,7 @@ const resolveEditableMemoTitle = (title?: string | null) => {
 };
 
 const alertProtectedImageLoadFailure = (
-  locale: "zh-CN" | "en-US",
+  locale: "zh-CN" | "en-US" | "ja",
   failure: ProtectedResourceLoadFailure
 ) => {
   const statusLabel = failure.status != null
@@ -135,7 +135,7 @@ const alertProtectedImageLoadFailure = (
       ? "network error"
       : "网络错误";
   Alert.alert(
-    locale === "en-US" ? "Image failed to load" : "图片加载失败",
+    locale !== "zh-CN" ? "Image failed to load" : "图片加载失败",
     locale === "en-US"
       ? `Could not load a note image (${statusLabel}). Check the network and try again.`
       : `笔记中的图片未能加载（${statusLabel}）。请检查网络后重试。`
@@ -759,9 +759,14 @@ export const CreateMemoModal = ({
       </View>
       <NotebookPickerModal
         activeNotebookId={targetNotebookId}
+        includeAllNotes={false}
         notebooks={notebooks}
         onClose={() => setNotebookPickerOpen(false)}
         onSelect={(nextNotebookId) => {
+          if (!nextNotebookId || nextNotebookId === "all") {
+            setNotebookPickerOpen(false);
+            return;
+          }
           setNotebookId(nextNotebookId);
           setNotebookPickerOpen(false);
           markDirty();
@@ -802,6 +807,7 @@ export const CreateMemoModal = ({
   );
 };
 
+/** Full-tree editor for paths that do not already have a mounted viewer WebView. Existing notes edit in place on the detail viewer. */
 export const RichEditorModal = ({
   baseUrl,
   initialDraft,
@@ -861,7 +867,7 @@ export const RichEditorModal = ({
   const [resourceTarget, setResourceTarget] = useState<MobileResourceTarget | null>(null);
   const editorStartup = useMobileEditorStartupGuard({ active: Boolean(memo && baseUrl), ready });
   const { pickUploadAssets, uploadSourcePicker } = useMobileEditorUploadAsset();
-  const notebookLabel = notebooks.find((notebook) => notebook.id === notebookId)?.name ?? "未分类";
+  const notebookLabel = notebooks.find((notebook) => notebook.id === notebookId)?.name ?? localizeMissingNotebookName(resolvedLocale);
   const saveLabel = error ? "保存失败" : saving ? "保存中" : uploading ? "上传中" : dirty ? (draftRestored ? "本地草稿" : "未保存") : ready ? "已保存" : "加载中";
   const titleRef = useRef(title);
   const tagsTextRef = useRef(tagsText);
@@ -1213,9 +1219,14 @@ export const RichEditorModal = ({
         )}
         <NotebookPickerModal
           activeNotebookId={notebookId}
+          includeAllNotes={false}
           notebooks={notebooks}
           onClose={() => setNotebookPickerOpen(false)}
           onSelect={(nextNotebookId) => {
+            if (!nextNotebookId || nextNotebookId === "all") {
+              setNotebookPickerOpen(false);
+              return;
+            }
             setNotebookId(nextNotebookId);
             setNotebookPickerOpen(false);
             dirtyRef.current = true;

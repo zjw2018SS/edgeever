@@ -1,4 +1,5 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
+import { DIAGRAM_CANVAS_DARK, DIAGRAM_CANVAS_LIGHT } from "@edgeever/shared";
 import {
   DEFAULT_CUSTOM_DARK_COLORS,
   DEFAULT_CUSTOM_EDITOR_THEME,
@@ -12,6 +13,7 @@ export {
   DEFAULT_CUSTOM_DARK_COLORS,
   DEFAULT_CUSTOM_EDITOR_THEME,
   DEFAULT_CUSTOM_LIGHT_COLORS,
+  localizeStoredCustomThemeName,
 } from "@/lib/custom-editor-theme";
 export type { CustomEditorTheme, ThemeColors } from "@/lib/custom-editor-theme";
 
@@ -49,8 +51,24 @@ export interface MermaidThemePalette {
 }
 
 export const MERMAID_THEME_PALETTES: Record<MermaidThemeName, MermaidThemePalette> = {
-  "zinc-light": { bg: "#FFFFFF", fg: "#27272A", line: "#a1a1aa", accent: "#52525b", muted: "#71717a" },
-  "zinc-dark": { bg: "#18181B", fg: "#FAFAFA", line: "#52525b", accent: "#a1a1aa", muted: "#a1a1aa" },
+  "zinc-light": {
+    bg: DIAGRAM_CANVAS_LIGHT,
+    fg: "#27272A",
+    line: "#52525b",
+    accent: "#52525b",
+    muted: "#3f3f46",
+    surface: "#ffffff",
+    border: "#d4d4d8",
+  },
+  "zinc-dark": {
+    bg: DIAGRAM_CANVAS_DARK,
+    fg: "#FAFAFA",
+    line: "#8b938c",
+    accent: "#d4d4d8",
+    muted: "#d4d4d8",
+    surface: "#242b27",
+    border: "#3d4741",
+  },
   "tokyo-night": { bg: "#1a1b26", fg: "#a9b1d6", line: "#3d59a1", accent: "#7aa2f7", muted: "#7c85ac" },
   "tokyo-night-storm": { bg: "#24283b", fg: "#a9b1d6", line: "#3d59a1", accent: "#7aa2f7", muted: "#8991b8" },
   "tokyo-night-light": { bg: "#d5d6db", fg: "#343b58", line: "#34548a", accent: "#34548a", muted: "#545a71" },
@@ -87,17 +105,37 @@ export const MARKDOWN_THEME_NAMES = [
 export type MarkdownThemeName = (typeof MARKDOWN_THEME_NAMES)[number];
 export const MARKDOWN_THEME_PREFERENCES = ["auto", ...MARKDOWN_THEME_NAMES] as const;
 export type MarkdownThemePreference = (typeof MARKDOWN_THEME_PREFERENCES)[number];
+export const MARKDOWN_LIGHT_THEME_NAMES = [
+  "github-light",
+  "solarized-light",
+  "xcode-light",
+  "duotone-light",
+] as const satisfies readonly MarkdownThemeName[];
+export const isMarkdownLightTheme = (theme: MarkdownThemeName): boolean =>
+  (MARKDOWN_LIGHT_THEME_NAMES as readonly MarkdownThemeName[]).includes(theme);
 
 export const EDITOR_THEME_NAMES = [
   "default",
   "minimal-emerald",
   "outline-emerald",
+  "letter",
+  "guide",
+  "blueprint",
+  "journal",
+  "stance",
+  "stub",
+  "brief",
+  "outline",
+  "zen",
+  "grove",
   "wechat-green",
   "modern-mint",
-  "marxico",
   "custom",
 ] as const;
 export type EditorThemeName = string;
+
+export const isNamedEditorTheme = (theme: string) =>
+  (EDITOR_THEME_NAMES as readonly string[]).includes(theme) && theme !== "custom";
 
 interface AppearanceThemeContextValue {
   preference: ThemePreference;
@@ -136,7 +174,7 @@ const MARKDOWN_THEME_STORAGE_KEY = "edgeever.markdown-theme";
 const EDITOR_THEME_STORAGE_KEY = "edgeever.editor-theme";
 const CUSTOM_EDITOR_THEME_STORAGE_KEY = "edgeever.custom-editor-theme";
 const CUSTOM_EDITOR_THEMES_STORAGE_KEY = "edgeever.custom-editor-themes";
-const LIGHT_THEME_COLOR = "#f8f9fa";
+const LIGHT_THEME_COLOR = "#eef1f4";
 const DARK_THEME_COLOR = "#101311";
 const AppearanceThemeContext = createContext<AppearanceThemeContextValue | null>(null);
 const MermaidThemeContext = createContext<MermaidThemeContextValue | null>(null);
@@ -183,7 +221,7 @@ export const getStoredMarkdownTheme = (): MarkdownThemePreference => {
   const stored = readLocalStorageItem(MARKDOWN_THEME_STORAGE_KEY);
   return MARKDOWN_THEME_PREFERENCES.includes(stored as MarkdownThemePreference)
     ? (stored as MarkdownThemePreference)
-    : "tokyo-night";
+    : "auto";
 };
 
 export const resolveMarkdownTheme = (
@@ -195,7 +233,16 @@ export const resolveMarkdownTheme = (
     : preference;
 
 export const getStoredEditorTheme = (): string => {
-  return readLocalStorageItem(EDITOR_THEME_STORAGE_KEY) || "default";
+  const stored = readLocalStorageItem(EDITOR_THEME_STORAGE_KEY) || "default";
+  if (stored !== "marxico") return stored;
+  if (typeof window !== "undefined") {
+    try {
+      window.localStorage.setItem(EDITOR_THEME_STORAGE_KEY, "default");
+    } catch {
+      // Private mode / blocked storage — preference stays session-only.
+    }
+  }
+  return "default";
 };
 
 const normalizeCustomEditorTheme = (theme: CustomEditorTheme): CustomEditorTheme => ({
@@ -227,7 +274,7 @@ export const getStoredCustomEditorThemes = (): CustomEditorTheme[] => {
       if (oldTheme && typeof oldTheme.name === "string") {
         const migratedTheme: CustomEditorTheme = {
           id: "custom-migrated",
-          name: oldTheme.name || "My custom theme",
+          name: oldTheme.name || DEFAULT_CUSTOM_EDITOR_THEME.name,
           light: normalizeThemeColors({
             background: oldTheme.background || DEFAULT_CUSTOM_LIGHT_COLORS.background,
             text: oldTheme.text || DEFAULT_CUSTOM_LIGHT_COLORS.text,

@@ -69,6 +69,28 @@ enum MobileUI {
         }
         return next
     }
+
+    static func toggleTagSelection(current: [String], tag: String, maxSelections: Int) -> [String] {
+        guard maxSelections > 0 else { return [] }
+        if let index = current.firstIndex(of: tag) {
+            var next = current
+            next.remove(at: index)
+            return next
+        }
+        if maxSelections == 1 {
+            return [tag]
+        }
+        guard current.count < maxSelections else { return current }
+        return current + [tag]
+    }
+
+    static func memoHasExactTag(tags: [String], tag: String) -> Bool {
+        let normalized = tag.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        guard !normalized.isEmpty else { return true }
+        return tags.contains {
+            $0.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() == normalized
+        }
+    }
 }
 
 struct NotebookTreeItem: Identifiable, Equatable {
@@ -97,6 +119,20 @@ enum NotebookHierarchy {
             pending.append(contentsOf: childrenByParent[notebookId] ?? [])
         }
         return descendantIds
+    }
+
+    /// Port of `getNotebookScopeIds`: the notebooks a notebook view lists.
+    static func scopeIds(notebooks: [Notebook], targetNotebookId: String, includeDescendants: Bool) -> [String] {
+        includeDescendants ? descendantIds(notebooks: notebooks, targetNotebookId: targetNotebookId) : [targetNotebookId]
+    }
+
+    /// Port of `getNotebookDescendantMemoCount`: notes in sub-notebooks, not the notebook itself.
+    /// Expects direct per-notebook counts, as `LocalMirrorRepository.listNotebooks` returns them.
+    static func descendantMemoCount(notebooks: [Notebook], targetNotebookId: String) -> Int {
+        let memoCountById = Dictionary(notebooks.map { ($0.id, $0.memoCount) }, uniquingKeysWith: { first, _ in first })
+        return descendantIds(notebooks: notebooks, targetNotebookId: targetNotebookId)
+            .filter { $0 != targetNotebookId }
+            .reduce(0) { $0 + (memoCountById[$1] ?? 0) }
     }
 
     static func treeItems(from notebooks: [Notebook]) -> [NotebookTreeItem] {
@@ -205,7 +241,7 @@ enum NotebookHierarchy {
 
 enum MemoPreviewDate {
     /// Port of Android `formatMemoPreviewDate`: today → time, yesterday → 昨天, else y/m/d.
-    static func format(_ iso: String, locale: Locale = .current, isEnglish: Bool = false) -> String {
+    static func format(_ iso: String, locale: Locale = .current, isEnglish: Bool = false, language: AppUILanguage? = nil) -> String {
         let parsers = [ISO8601DateFormatter.edgeEver, ISO8601DateFormatter.edgeEverFallback]
         guard let date = parsers.compactMap({ $0.date(from: iso) }).first else { return "" }
         let calendar = Calendar.current
@@ -218,7 +254,11 @@ enum MemoPreviewDate {
             return f.string(from: date)
         }
         if calendar.isDateInYesterday(date) {
-            return isEnglish ? "Yesterday" : "昨天"
+            switch language ?? (isEnglish ? .english : .chinese) {
+            case .japanese: return "昨日"
+            case .english: return "Yesterday"
+            case .chinese: return "昨天"
+            }
         }
         let f = DateFormatter()
         f.locale = locale

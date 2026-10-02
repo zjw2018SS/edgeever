@@ -1,14 +1,35 @@
-import { visualTextUnits, compactFlowchartNodeSize, flowchartNodePresentation } from "./diagram-node-presentation";
+import { compactFlowchartNodeSize, flowchartNodePresentation } from "./diagram-node-presentation";
 export { compactFlowchartNodeSize, flowchartNodePresentation } from "./diagram-node-presentation";
+import { DIAGRAM_READABLE_MIN_SCALE, FLOWCHART_LAYOUT_SPACING } from "./diagram-flowchart-style";
+export {
+  DIAGRAM_READABLE_MIN_SCALE,
+  FLOWCHART_EDGE_ROUTER,
+  FLOWCHART_LABEL_FONT,
+  FLOWCHART_LAYOUT_SPACING,
+  flowchartEdgeIsStraight,
+  flowchartEdgePorts,
+  flowchartFitsReadableViewport,
+} from "./diagram-flowchart-style";
+import {
+  MIND_MAP_HORIZONTAL_GAP,
+  MIND_MAP_VERTICAL_GAP,
+  mindMapIsOneSided,
+  mindMapLayoutFamily,
+  mindMapNodePresentation,
+  mindMapNodeRole,
+} from "./diagram-mindmap-style";
+export { compactMindMapNodeSize } from "./diagram-mindmap-style";
 import { graphlib, layout as runDagreLayout } from "@dagrejs/dagre";
 import {
   ARCHITECTURE_DIAGRAM_SCHEMA_VERSION,
+  DIAGRAM_DEFAULT_THEME,
   DIAGRAM_SCHEMA_VERSION,
   type ArchitectureResourceIcon,
   type DiagramDocument,
   type DiagramEdgeKind,
   type DiagramKind,
   type DiagramNodeShape,
+  type DiagramStructure,
   type DiagramTheme,
 } from "./diagram";
 
@@ -56,9 +77,12 @@ export type DiagramIrNodeType =
   | "external"
   | "boundary";
 
+// Product semantics for mind maps, flowcharts, and architecture diagrams.
+// AntV Infographic syntax is a separate, renderer-native document format.
 export type DiagramIr = {
   kind: DiagramKind;
   theme?: DiagramTheme;
+  structure?: DiagramStructure;
   layout?: { direction?: "left-to-right" | "top-to-bottom" };
   nodes: Array<{
     id: string;
@@ -76,20 +100,28 @@ export type DiagramIr = {
   }>;
 };
 
-const MIND_MAP_HORIZONTAL_GAP = 72;
-const MIND_MAP_VERTICAL_GAP = 16;
 const MIND_MAP_TWO_SIDED_THRESHOLD = 5;
-const FLOWCHART_DETACHED_GAP = 72;
+const BRACE_HORIZONTAL_GAP = 88;
+const TREE_HORIZONTAL_GAP = 64;
+const ORG_RANK_GAP = 56;
+const ORG_NODE_GAP = 36;
+const TIMELINE_COLUMN_GAP = 56;
+const TIMELINE_SPINE_GAP = 40;
+const TIMELINE_NEST_INDENT = 16;
+const FISHBONE_COLUMN_GAP = 28;
+const FISHBONE_SPINE_GAP = 56;
+const FISHBONE_NEST_INDENT = 20;
+const FLOWCHART_DETACHED_GAP = 56;
 const FLOWCHART_DETACHED_ROW_GAP = 24;
 const FLOWCHART_DETACHED_ROW_WIDTH = 960;
 const ARCHITECTURE_LAYOUT_ROW_WIDTH = 1480;
 const ARCHITECTURE_GROUP_HORIZONTAL_GAP = 72;
 const ARCHITECTURE_GROUP_VERTICAL_GAP = 88;
-
-export const compactMindMapNodeSize = (label: string, isRoot: boolean) => ({
-  width: Math.round(Math.min(isRoot ? 168 : 156, Math.max(isRoot ? 112 : 92, visualTextUnits(label) * 13 + 28))),
-  height: isRoot ? 42 : 36,
-});
+const ARCHITECTURE_GROUP_PAD_X = 36;
+const ARCHITECTURE_GROUP_PAD_Y = 56;
+const ARCHITECTURE_LAYOUT_SPACING = { rank: 96, node: 40 };
+const ARCHITECTURE_META_SPACING = { rank: 88, node: 56 };
+const ARCHITECTURE_ORIGIN = 32;
 
 export const compactArchitectureNodeSize = (
   shape: DiagramNodeShape,
@@ -137,15 +169,19 @@ const computeMindMapLayout = (
     }
   }
 
+  const childIdsOf = (nodeId: string, ancestors: Set<string>) => (
+    (childrenByParent.get(nodeId) ?? []).filter((childId) => !ancestors.has(childId) && childId !== nodeId)
+  );
+
   const subtreeHeights = new Map<string, number>();
-  const measureSubtree = (nodeId: string, ancestors: Set<string>): number => {
+  const measureSubtreeHeight = (nodeId: string, ancestors: Set<string>): number => {
     const cached = subtreeHeights.get(nodeId);
     if (cached !== undefined) return cached;
     const node = nodeById.get(nodeId);
     if (!node || ancestors.has(nodeId)) return 0;
     const nextAncestors = new Set(ancestors).add(nodeId);
-    const childHeights = (childrenByParent.get(nodeId) ?? [])
-      .map((childId) => measureSubtree(childId, nextAncestors))
+    const childHeights = childIdsOf(nodeId, nextAncestors)
+      .map((childId) => measureSubtreeHeight(childId, nextAncestors))
       .filter((height) => height > 0);
     const childrenHeight = childHeights.reduce((total, height) => total + height, 0)
       + Math.max(0, childHeights.length - 1) * MIND_MAP_VERTICAL_GAP;
@@ -157,78 +193,313 @@ const computeMindMapLayout = (
   const positions: DiagramLayoutPositions = Object.fromEntries(
     document.nodes.map((node) => [node.id, { x: node.x, y: node.y }]),
   );
-  const placeChildren = (
+
+  const placeBranchChildren = (
     nodeId: string,
     subtreeTop: number,
     ancestors: Set<string>,
     direction: 1 | -1,
+    horizontalGap: number,
+    align: "center" | "start",
   ) => {
     const node = nodeById.get(nodeId);
     if (!node || ancestors.has(nodeId)) return;
     const nextAncestors = new Set(ancestors).add(nodeId);
-    const childIds = (childrenByParent.get(nodeId) ?? []).filter((childId) => !nextAncestors.has(childId));
-    const childHeights = childIds.map((childId) => measureSubtree(childId, nextAncestors));
+    const childIds = childIdsOf(nodeId, nextAncestors);
+    const childHeights = childIds.map((childId) => measureSubtreeHeight(childId, nextAncestors));
     const childrenHeight = childHeights.reduce((total, height) => total + height, 0)
       + Math.max(0, childHeights.length - 1) * MIND_MAP_VERTICAL_GAP;
-    let cursor = subtreeTop + (measureSubtree(nodeId, ancestors) - childrenHeight) / 2;
+    let cursor = align === "start"
+      ? positions[nodeId].y
+      : subtreeTop + (measureSubtreeHeight(nodeId, ancestors) - childrenHeight) / 2;
     for (let index = 0; index < childIds.length; index += 1) {
       const childId = childIds[index];
       const child = nodeById.get(childId)!;
       const childSubtreeHeight = childHeights[index];
       positions[childId] = {
         x: direction === 1
-          ? positions[nodeId].x + node.width + MIND_MAP_HORIZONTAL_GAP
-          : positions[nodeId].x - MIND_MAP_HORIZONTAL_GAP - child.width,
-        y: Math.round(cursor + (childSubtreeHeight - child.height) / 2),
+          ? positions[nodeId].x + node.width + horizontalGap
+          : positions[nodeId].x - horizontalGap - child.width,
+        y: Math.round(align === "start" ? cursor : cursor + (childSubtreeHeight - child.height) / 2),
       };
-      placeChildren(childId, cursor, nextAncestors, direction);
+      placeBranchChildren(childId, cursor, nextAncestors, direction, horizontalGap, align);
       cursor += childSubtreeHeight + MIND_MAP_VERTICAL_GAP;
     }
   };
 
-  const placeRootSide = (rootId: string, childIds: string[], direction: 1 | -1) => {
+  const placeRootSide = (
+    rootId: string,
+    childIds: string[],
+    direction: 1 | -1,
+    horizontalGap: number,
+    align: "center" | "start",
+  ) => {
     const root = nodeById.get(rootId);
     if (!root || childIds.length === 0) return;
-    const childHeights = childIds.map((childId) => measureSubtree(childId, new Set([rootId])));
+    const childHeights = childIds.map((childId) => measureSubtreeHeight(childId, new Set([rootId])));
     const sideHeight = childHeights.reduce((total, height) => total + height, 0)
       + Math.max(0, childHeights.length - 1) * MIND_MAP_VERTICAL_GAP;
-    let cursor = root.y + root.height / 2 - sideHeight / 2;
+    let cursor = align === "start"
+      ? root.y
+      : root.y + root.height / 2 - sideHeight / 2;
     for (let index = 0; index < childIds.length; index += 1) {
       const child = nodeById.get(childIds[index])!;
       const childSubtreeHeight = childHeights[index];
       positions[child.id] = {
         x: direction === 1
-          ? root.x + root.width + MIND_MAP_HORIZONTAL_GAP
-          : root.x - MIND_MAP_HORIZONTAL_GAP - child.width,
-        y: Math.round(cursor + (childSubtreeHeight - child.height) / 2),
+          ? root.x + root.width + horizontalGap
+          : root.x - horizontalGap - child.width,
+        y: Math.round(align === "start" ? cursor : cursor + (childSubtreeHeight - child.height) / 2),
       };
-      placeChildren(child.id, cursor, new Set([rootId]), direction);
+      placeBranchChildren(child.id, cursor, new Set([rootId]), direction, horizontalGap, align);
       cursor += childSubtreeHeight + MIND_MAP_VERTICAL_GAP;
     }
   };
 
-  const roots = document.nodes
-    .filter((node) => !node.parentId || !nodeById.has(node.parentId))
-    .sort((left, right) => left.y - right.y || left.id.localeCompare(right.id));
-  for (const root of roots) {
-    const childIds = (childrenByParent.get(root.id) ?? []).filter((childId) => childId !== root.id);
-    if (childIds.length < MIND_MAP_TWO_SIDED_THRESHOLD) {
-      placeRootSide(root.id, childIds, 1);
-      continue;
+  const layoutBranchMap = (oneSided: boolean, horizontalGap: number, align: "center" | "start") => {
+    const roots = document.nodes
+      .filter((node) => !node.parentId || !nodeById.has(node.parentId))
+      .sort((left, right) => left.y - right.y || left.id.localeCompare(right.id));
+    for (const root of roots) {
+      const childIds = childIdsOf(root.id, new Set([root.id]));
+      if (oneSided || childIds.length < MIND_MAP_TWO_SIDED_THRESHOLD) {
+        placeRootSide(root.id, childIds, 1, horizontalGap, align);
+        continue;
+      }
+      const sides: Record<"left" | "right", { ids: string[]; height: number }> = {
+        left: { ids: [], height: 0 },
+        right: { ids: [], height: 0 },
+      };
+      for (const childId of childIds) {
+        const side = sides.right.height <= sides.left.height ? sides.right : sides.left;
+        side.ids.push(childId);
+        side.height += measureSubtreeHeight(childId, new Set([root.id])) + MIND_MAP_VERTICAL_GAP;
+      }
+      placeRootSide(root.id, sides.left.ids, -1, horizontalGap, align);
+      placeRootSide(root.id, sides.right.ids, 1, horizontalGap, align);
     }
-    const sides: Record<"left" | "right", { ids: string[]; height: number }> = {
-      left: { ids: [], height: 0 },
-      right: { ids: [], height: 0 },
+    return positions;
+  };
+
+  const subtreeWidths = new Map<string, number>();
+  const measureSubtreeWidth = (nodeId: string, ancestors: Set<string>): number => {
+    const cached = subtreeWidths.get(nodeId);
+    if (cached !== undefined) return cached;
+    const node = nodeById.get(nodeId);
+    if (!node || ancestors.has(nodeId)) return 0;
+    const nextAncestors = new Set(ancestors).add(nodeId);
+    const childWidths = childIdsOf(nodeId, nextAncestors).map((childId) => measureSubtreeWidth(childId, nextAncestors));
+    const childrenWidth = childWidths.reduce((total, width) => total + width, 0)
+      + Math.max(0, childWidths.length - 1) * ORG_NODE_GAP;
+    const width = Math.max(node.width, childrenWidth);
+    subtreeWidths.set(nodeId, width);
+    return width;
+  };
+
+  const layoutOrgChart = () => {
+    const placeOrgChildren = (nodeId: string, ancestors: Set<string>) => {
+      const node = nodeById.get(nodeId);
+      if (!node) return;
+      const nextAncestors = new Set(ancestors).add(nodeId);
+      const childIds = childIdsOf(nodeId, nextAncestors);
+      if (childIds.length === 0) return;
+      const childWidths = childIds.map((childId) => measureSubtreeWidth(childId, nextAncestors));
+      const totalWidth = childWidths.reduce((total, width) => total + width, 0)
+        + Math.max(0, childWidths.length - 1) * ORG_NODE_GAP;
+      const parent = positions[nodeId];
+      let cursor = parent.x + node.width / 2 - totalWidth / 2;
+      const childY = parent.y + node.height + ORG_RANK_GAP;
+      for (let index = 0; index < childIds.length; index += 1) {
+        const child = nodeById.get(childIds[index])!;
+        positions[child.id] = {
+          x: Math.round(cursor + (childWidths[index] - child.width) / 2),
+          y: Math.round(childY),
+        };
+        placeOrgChildren(child.id, nextAncestors);
+        cursor += childWidths[index] + ORG_NODE_GAP;
+      }
     };
-    for (const childId of childIds) {
-      const side = sides.right.height <= sides.left.height ? sides.right : sides.left;
-      side.ids.push(childId);
-      side.height += measureSubtree(childId, new Set([root.id])) + MIND_MAP_VERTICAL_GAP;
+    for (const root of document.nodes.filter((node) => !node.parentId || !nodeById.has(node.parentId))) {
+      placeOrgChildren(root.id, new Set([root.id]));
     }
-    placeRootSide(root.id, sides.left.ids, -1);
-    placeRootSide(root.id, sides.right.ids, 1);
+    return positions;
+  };
+
+  const layoutTimeline = () => {
+    const placeAway = (
+      parentId: string,
+      startY: number,
+      direction: 1 | -1,
+      x: number,
+      ancestors: Set<string>,
+    ): number => {
+      const nextAncestors = new Set(ancestors).add(parentId);
+      const childIds = childIdsOf(parentId, nextAncestors);
+      let cursor = startY;
+      let far = startY;
+      for (const childId of childIds) {
+        const child = nodeById.get(childId)!;
+        if (direction === 1) {
+          positions[childId] = { x: Math.round(x), y: Math.round(cursor) };
+          const nestedFar = placeAway(
+            childId,
+            positions[childId].y + child.height + MIND_MAP_VERTICAL_GAP,
+            1,
+            x + TIMELINE_NEST_INDENT,
+            nextAncestors,
+          );
+          cursor = Math.max(positions[childId].y + child.height, nestedFar) + MIND_MAP_VERTICAL_GAP;
+          far = cursor;
+        } else {
+          positions[childId] = { x: Math.round(x), y: Math.round(cursor - child.height) };
+          const nestedFar = placeAway(
+            childId,
+            positions[childId].y - MIND_MAP_VERTICAL_GAP,
+            -1,
+            x + TIMELINE_NEST_INDENT,
+            nextAncestors,
+          );
+          cursor = Math.min(positions[childId].y, nestedFar) - MIND_MAP_VERTICAL_GAP;
+          far = cursor;
+        }
+      }
+      return far;
+    };
+    for (const root of document.nodes.filter((node) => !node.parentId || !nodeById.has(node.parentId))) {
+      const spineY = root.y + root.height / 2;
+      const childIds = childIdsOf(root.id, new Set([root.id]));
+      let cursorX = root.x + root.width + TIMELINE_COLUMN_GAP;
+      for (let index = 0; index < childIds.length; index += 1) {
+        const child = nodeById.get(childIds[index])!;
+        const above = index % 2 === 0;
+        positions[child.id] = {
+          x: Math.round(cursorX),
+          y: Math.round(above ? spineY - TIMELINE_SPINE_GAP - child.height : spineY + TIMELINE_SPINE_GAP),
+        };
+        if (above) {
+          placeAway(child.id, positions[child.id].y - MIND_MAP_VERTICAL_GAP, -1, cursorX + TIMELINE_NEST_INDENT, new Set([root.id, child.id]));
+        } else {
+          placeAway(child.id, positions[child.id].y + child.height + MIND_MAP_VERTICAL_GAP, 1, cursorX + TIMELINE_NEST_INDENT, new Set([root.id, child.id]));
+        }
+        const nested = childIdsOf(child.id, new Set([root.id, child.id])).length > 0;
+        cursorX += child.width + (nested ? TIMELINE_NEST_INDENT : 0) + TIMELINE_COLUMN_GAP;
+      }
+    }
+    return positions;
+  };
+
+  const layoutFishbone = () => {
+    const placeBoneChildren = (parentId: string, above: boolean, ancestors: Set<string>): number => {
+      const parent = nodeById.get(parentId);
+      if (!parent) return positions[parentId]?.y ?? 0;
+      const nextAncestors = new Set(ancestors).add(parentId);
+      const childIds = childIdsOf(parentId, nextAncestors);
+      let cursor = above
+        ? positions[parentId].y - MIND_MAP_VERTICAL_GAP
+        : positions[parentId].y + parent.height + MIND_MAP_VERTICAL_GAP;
+      let far = above ? positions[parentId].y : positions[parentId].y + parent.height;
+      for (const childId of childIds) {
+        const child = nodeById.get(childId)!;
+        positions[childId] = {
+          x: Math.round(positions[parentId].x - FISHBONE_NEST_INDENT),
+          y: Math.round(above ? cursor - child.height : cursor),
+        };
+        const childFar = placeBoneChildren(childId, above, nextAncestors);
+        if (above) {
+          cursor = childFar - MIND_MAP_VERTICAL_GAP;
+          far = Math.min(far, childFar);
+        } else {
+          cursor = childFar + MIND_MAP_VERTICAL_GAP;
+          far = Math.max(far, childFar);
+        }
+      }
+      return far;
+    };
+    for (const root of document.nodes.filter((node) => !node.parentId || !nodeById.has(node.parentId))) {
+      const spineY = root.y + root.height / 2;
+      const childIds = childIdsOf(root.id, new Set([root.id]));
+      let cursorX = root.x - FISHBONE_COLUMN_GAP;
+      for (let index = 0; index < childIds.length; index += 2) {
+        const aboveNode = nodeById.get(childIds[index])!;
+        const belowNode = childIds[index + 1] ? nodeById.get(childIds[index + 1]) : undefined;
+        const columnWidth = Math.max(aboveNode.width, belowNode?.width ?? 0) + FISHBONE_NEST_INDENT;
+        cursorX -= columnWidth;
+        positions[aboveNode.id] = {
+          x: Math.round(cursorX + (columnWidth - aboveNode.width) / 2),
+          y: Math.round(spineY - FISHBONE_SPINE_GAP - aboveNode.height),
+        };
+        placeBoneChildren(aboveNode.id, true, new Set([root.id, aboveNode.id]));
+        if (belowNode) {
+          positions[belowNode.id] = {
+            x: Math.round(cursorX + (columnWidth - belowNode.width) / 2),
+            y: Math.round(spineY + FISHBONE_SPINE_GAP),
+          };
+          placeBoneChildren(belowNode.id, false, new Set([root.id, belowNode.id]));
+        }
+        cursorX -= FISHBONE_COLUMN_GAP;
+      }
+    }
+    return positions;
+  };
+
+  const family = mindMapLayoutFamily(document.structure);
+  if (family === "org") return layoutOrgChart();
+  if (family === "timeline") return layoutTimeline();
+  if (family === "fishbone") return layoutFishbone();
+  if (family === "brace") return layoutBranchMap(true, BRACE_HORIZONTAL_GAP, "center");
+  if (family === "tree") return layoutBranchMap(true, TREE_HORIZONTAL_GAP, "start");
+  return layoutBranchMap(mindMapIsOneSided(document.structure), MIND_MAP_HORIZONTAL_GAP, "center");
+};
+
+const architectureTopLevelBoundaryId = (
+  nodeId: string,
+  nodeById: Map<string, DiagramDocument["nodes"][number]>,
+) => {
+  let current = nodeById.get(nodeId);
+  let boundaryId: string | undefined;
+  const visited = new Set<string>();
+  while (current?.parentId && !visited.has(current.parentId)) {
+    visited.add(current.parentId);
+    const parent = nodeById.get(current.parentId);
+    if (!parent) break;
+    if (parent.shape === "boundary") boundaryId = parent.id;
+    current = parent;
   }
-  return positions;
+  return boundaryId;
+};
+
+const layoutDagreGraph = (
+  nodes: Array<{ id: string; width: number; height: number }>,
+  edges: Array<{ source: string; target: string }>,
+  direction: "left-to-right" | "top-to-bottom",
+  spacing: { rank: number; node: number } = { rank: 96, node: 40 },
+  margin = { x: 32, y: 32 },
+): DiagramLayoutPositions => {
+  if (nodes.length === 0) return {};
+  const layoutGraph = new graphlib.Graph();
+  layoutGraph.setGraph({
+    rankdir: direction === "top-to-bottom" ? "TB" : "LR",
+    ranksep: spacing.rank,
+    nodesep: spacing.node,
+    marginx: margin.x,
+    marginy: margin.y,
+  });
+  layoutGraph.setDefaultEdgeLabel(() => ({}));
+  const layoutNodeIds = new Set(nodes.map((node) => node.id));
+  for (const node of nodes) layoutGraph.setNode(node.id, { width: node.width, height: node.height });
+  for (const edge of edges) {
+    if (edge.source === edge.target) continue;
+    if (layoutNodeIds.has(edge.source) && layoutNodeIds.has(edge.target)) layoutGraph.setEdge(edge.source, edge.target);
+  }
+  runDagreLayout(layoutGraph);
+  return Object.fromEntries(nodes.flatMap((node) => {
+    const position = layoutGraph.node(node.id) as { x: number; y: number } | undefined;
+    if (!position) return [];
+    return [[node.id, {
+      x: Math.round(position.x - node.width / 2),
+      y: Math.round(position.y - node.height / 2),
+    }]];
+  }));
 };
 
 const wrapArchitectureGroups = (
@@ -236,20 +507,6 @@ const wrapArchitectureGroups = (
   positions: DiagramLayoutPositions,
 ) => {
   const nodeById = new Map(document.nodes.map((node) => [node.id, node]));
-  const topLevelBoundaryId = (nodeId: string) => {
-    let current = nodeById.get(nodeId);
-    let boundaryId: string | undefined;
-    const visited = new Set<string>();
-    while (current?.parentId && !visited.has(current.parentId)) {
-      visited.add(current.parentId);
-      const parent = nodeById.get(current.parentId);
-      if (!parent) break;
-      if (parent.shape === "boundary") boundaryId = parent.id;
-      current = parent;
-    }
-    return boundaryId;
-  };
-
   const topLevelBoundaries = document.nodes.filter((node) => (
     node.shape === "boundary" && (!node.parentId || nodeById.get(node.parentId)?.shape !== "boundary")
   ));
@@ -257,7 +514,9 @@ const wrapArchitectureGroups = (
 
   const groups = topLevelBoundaries.flatMap((boundary) => {
     const members = document.nodes.filter((node) => (
-      node.shape !== "boundary" && topLevelBoundaryId(node.id) === boundary.id && positions[node.id]
+      node.shape !== "boundary"
+      && architectureTopLevelBoundaryId(node.id, nodeById) === boundary.id
+      && positions[node.id]
     ));
     if (members.length === 0) return [];
     const left = Math.min(...members.map((node) => positions[node.id].x));
@@ -266,30 +525,32 @@ const wrapArchitectureGroups = (
     const bottom = Math.max(...members.map((node) => positions[node.id].y + node.height));
     return [{
       boundary,
-      members: document.nodes.filter((node) => node.id === boundary.id || topLevelBoundaryId(node.id) === boundary.id),
+      members: document.nodes.filter((node) => (
+        node.id === boundary.id || architectureTopLevelBoundaryId(node.id, nodeById) === boundary.id
+      )),
       left,
       top,
-      width: Math.max(260, right - left + 72),
-      height: Math.max(180, bottom - top + 92),
+      width: Math.max(260, right - left + ARCHITECTURE_GROUP_PAD_X * 2),
+      height: Math.max(180, bottom - top + ARCHITECTURE_GROUP_PAD_Y + ARCHITECTURE_GROUP_PAD_X),
     }];
   }).sort((left, right) => left.left - right.left || left.top - right.top || left.boundary.id.localeCompare(right.boundary.id));
   if (groups.length < 2) return positions;
 
-  const contentLeft = Math.min(...groups.map((group) => group.left - 36));
-  const contentRight = Math.max(...groups.map((group) => group.left - 36 + group.width));
+  const contentLeft = Math.min(...groups.map((group) => group.left - ARCHITECTURE_GROUP_PAD_X));
+  const contentRight = Math.max(...groups.map((group) => group.left - ARCHITECTURE_GROUP_PAD_X + group.width));
   if (contentRight - contentLeft <= ARCHITECTURE_LAYOUT_ROW_WIDTH) return positions;
 
-  let cursorX = 32;
-  let cursorY = 32;
+  let cursorX = ARCHITECTURE_ORIGIN;
+  let cursorY = ARCHITECTURE_ORIGIN;
   let rowHeight = 0;
   for (const group of groups) {
-    if (cursorX > 32 && cursorX + group.width > 32 + ARCHITECTURE_LAYOUT_ROW_WIDTH) {
-      cursorX = 32;
+    if (cursorX > ARCHITECTURE_ORIGIN && cursorX + group.width > ARCHITECTURE_ORIGIN + ARCHITECTURE_LAYOUT_ROW_WIDTH) {
+      cursorX = ARCHITECTURE_ORIGIN;
       cursorY += rowHeight + ARCHITECTURE_GROUP_VERTICAL_GAP;
       rowHeight = 0;
     }
-    const deltaX = cursorX + 36 - group.left;
-    const deltaY = cursorY + 56 - group.top;
+    const deltaX = cursorX + ARCHITECTURE_GROUP_PAD_X - group.left;
+    const deltaY = cursorY + ARCHITECTURE_GROUP_PAD_Y - group.top;
     for (const node of group.members) {
       const position = positions[node.id] ?? { x: node.x, y: node.y };
       positions[node.id] = { x: position.x + deltaX, y: position.y + deltaY };
@@ -300,41 +561,59 @@ const wrapArchitectureGroups = (
   return positions;
 };
 
+const placeUnpositionedArchitectureNodes = (
+  document: DiagramDocument,
+  positions: DiagramLayoutPositions,
+) => {
+  const nodeById = new Map(document.nodes.map((node) => [node.id, node]));
+  const detached = document.nodes.filter((node) => (
+    node.shape !== "boundary"
+    && !positions[node.id]
+    && !architectureTopLevelBoundaryId(node.id, nodeById)
+  )).sort((left, right) => left.y - right.y || left.x - right.x || left.id.localeCompare(right.id));
+  if (detached.length === 0) return positions;
+
+  const placed = document.nodes.filter((node) => node.shape !== "boundary" && positions[node.id]);
+  const contentLeft = placed.length > 0
+    ? Math.min(...placed.map((node) => positions[node.id].x))
+    : ARCHITECTURE_ORIGIN;
+  const contentBottom = placed.length > 0
+    ? Math.max(...placed.map((node) => positions[node.id].y + node.height))
+    : ARCHITECTURE_ORIGIN;
+  let cursorX = contentLeft;
+  let cursorY = contentBottom + FLOWCHART_DETACHED_GAP;
+  let rowHeight = 0;
+  for (const node of detached) {
+    if (cursorX > contentLeft && cursorX + node.width > contentLeft + FLOWCHART_DETACHED_ROW_WIDTH) {
+      cursorX = contentLeft;
+      cursorY += rowHeight + FLOWCHART_DETACHED_ROW_GAP;
+      rowHeight = 0;
+    }
+    positions[node.id] = { x: cursorX, y: cursorY };
+    cursorX += node.width + 40;
+    rowHeight = Math.max(rowHeight, node.height);
+  }
+  return positions;
+};
+
 const computeDagreLayout = (
   document: DiagramDocument,
   options: DiagramLayoutOptions,
   excludeBoundaries: boolean,
   spacing: { rank: number; node: number } = { rank: 96, node: 40 },
 ): DiagramLayoutPositions => {
-  const layoutGraph = new graphlib.Graph();
-  layoutGraph.setGraph({
-    rankdir: options.direction === "top-to-bottom" ? "TB" : "LR",
-    ranksep: spacing.rank,
-    nodesep: spacing.node,
-    marginx: 32,
-    marginy: 32,
-  });
-  layoutGraph.setDefaultEdgeLabel(() => ({}));
-
   const layoutNodes = excludeBoundaries
     ? document.nodes.filter((node) => node.shape !== "boundary")
     : document.nodes;
-  const layoutNodeIds = new Set(layoutNodes.map((node) => node.id));
-  for (const node of layoutNodes) layoutGraph.setNode(node.id, { width: node.width, height: node.height });
-  for (const edge of document.edges) {
-    if (layoutNodeIds.has(edge.source) && layoutNodeIds.has(edge.target)) layoutGraph.setEdge(edge.source, edge.target);
+  const positions = layoutDagreGraph(
+    layoutNodes,
+    document.edges,
+    options.direction === "top-to-bottom" ? "top-to-bottom" : "left-to-right",
+    spacing,
+  );
+  for (const node of document.nodes) {
+    if (node.shape === "boundary" && !positions[node.id]) positions[node.id] = { x: node.x, y: node.y };
   }
-
-  runDagreLayout(layoutGraph);
-  const positions = Object.fromEntries(document.nodes.flatMap((node) => {
-    if (node.shape === "boundary") return [[node.id, { x: node.x, y: node.y }]];
-    const position = layoutGraph.node(node.id) as { x: number; y: number } | undefined;
-    if (!position) return [];
-    return [[node.id, {
-      x: Math.round(position.x - node.width / 2),
-      y: Math.round(position.y - node.height / 2),
-    }]];
-  }));
   return positions;
 };
 
@@ -373,24 +652,173 @@ const placeDetachedFlowchartNodes = (
   return positions;
 };
 
-const computeFlowchartLayout = (document: DiagramDocument, options: DiagramLayoutOptions) => (
-  placeDetachedFlowchartNodes(
-    document,
-    computeDagreLayout(
-      document,
-      { ...options, direction: options.direction ?? "top-to-bottom" },
-      false,
-      { rank: 80, node: 48 },
-    ),
-  )
-);
+const alignFlowchartSpine = (
+  document: DiagramDocument,
+  positions: DiagramLayoutPositions,
+  direction: "left-to-right" | "top-to-bottom",
+) => {
+  const topToBottom = direction !== "left-to-right";
+  const incoming = new Map<string, string[]>();
+  const outgoing = new Map<string, string[]>();
+  for (const node of document.nodes) {
+    incoming.set(node.id, []);
+    outgoing.set(node.id, []);
+  }
+  for (const edge of document.edges) {
+    if (!positions[edge.source] || !positions[edge.target]) continue;
+    outgoing.get(edge.source)?.push(edge.target);
+    incoming.get(edge.target)?.push(edge.source);
+  }
+  const isBackEdge = (source: string, target: string) => {
+    const from = positions[source];
+    const to = positions[target];
+    return topToBottom ? from.y > to.y + 8 : from.x > to.x + 8;
+  };
+  const sizeById = new Map(document.nodes.map((node) => [node.id, node]));
+  const ordered = [...document.nodes].sort((left, right) => {
+    const leftPosition = positions[left.id];
+    const rightPosition = positions[right.id];
+    return topToBottom
+      ? leftPosition.y - rightPosition.y || leftPosition.x - rightPosition.x
+      : leftPosition.x - rightPosition.x || leftPosition.y - rightPosition.y;
+  });
+  const boxesOverlap = (
+    left: { x: number; y: number; width: number; height: number },
+    right: { x: number; y: number; width: number; height: number },
+  ) => left.x < right.x + right.width && left.x + left.width > right.x
+    && left.y < right.y + right.height && left.y + left.height > right.y;
 
-const computeArchitectureLayout = (document: DiagramDocument, options: DiagramLayoutOptions) => (
-  wrapArchitectureGroups(
-    document,
-    computeDagreLayout(document, { ...options, direction: options.direction ?? "left-to-right" }, true),
-  )
-);
+  for (const node of ordered) {
+    const successors = (outgoing.get(node.id) ?? []).filter((target) => !isBackEdge(node.id, target));
+    if (successors.length !== 1) continue;
+    const targetId = successors[0];
+    const predecessors = (incoming.get(targetId) ?? []).filter((source) => !isBackEdge(source, targetId));
+    if (predecessors.length !== 1 || predecessors[0] !== node.id) continue;
+    const source = sizeById.get(node.id);
+    const target = sizeById.get(targetId);
+    if (!source || !target) continue;
+    const from = positions[node.id];
+    const current = positions[targetId];
+    const next = topToBottom
+      ? { x: Math.round(from.x + source.width / 2 - target.width / 2), y: current.y }
+      : { x: current.x, y: Math.round(from.y + source.height / 2 - target.height / 2) };
+    const nextBox = { ...next, width: target.width, height: target.height };
+    const overlaps = document.nodes.some((other) => {
+      if (other.id === node.id || other.id === targetId) return false;
+      const otherPosition = positions[other.id];
+      return boxesOverlap(nextBox, { ...otherPosition, width: other.width, height: other.height });
+    });
+    if (!overlaps) positions[targetId] = next;
+  }
+  return positions;
+};
+
+const computeFlowchartLayout = (document: DiagramDocument, options: DiagramLayoutOptions) => {
+  const direction = options.direction ?? "top-to-bottom";
+  const positions = computeDagreLayout(document, { ...options, direction }, false, FLOWCHART_LAYOUT_SPACING);
+  alignFlowchartSpine(document, positions, direction);
+  return placeDetachedFlowchartNodes(document, positions);
+};
+
+const computeArchitectureLayout = (document: DiagramDocument, options: DiagramLayoutOptions) => {
+  const direction = options.direction ?? "left-to-right";
+  const nodeById = new Map(document.nodes.map((node) => [node.id, node]));
+  const topLevelBoundaries = document.nodes.filter((node) => (
+    node.shape === "boundary" && (!node.parentId || nodeById.get(node.parentId)?.shape !== "boundary")
+  ));
+  const groups = topLevelBoundaries.flatMap((boundary) => {
+    const members = document.nodes.filter((node) => (
+      node.shape !== "boundary" && architectureTopLevelBoundaryId(node.id, nodeById) === boundary.id
+    ));
+    return members.length > 0 ? [{ boundary, members }] : [];
+  });
+  if (groups.length === 0) {
+    return computeDagreLayout(document, { ...options, direction }, true, ARCHITECTURE_LAYOUT_SPACING);
+  }
+
+  const innerByGroup = new Map<string, DiagramLayoutPositions>();
+  const groupMetaNodes = groups.map((group) => {
+    const memberIds = new Set(group.members.map((node) => node.id));
+    const intraEdges = document.edges.filter((edge) => memberIds.has(edge.source) && memberIds.has(edge.target));
+    const inner = layoutDagreGraph(group.members, intraEdges, direction, ARCHITECTURE_LAYOUT_SPACING, { x: 0, y: 0 });
+    const left = Math.min(...group.members.map((node) => inner[node.id].x));
+    const top = Math.min(...group.members.map((node) => inner[node.id].y));
+    const normalized = Object.fromEntries(group.members.map((node) => [node.id, {
+      x: inner[node.id].x - left,
+      y: inner[node.id].y - top,
+    }]));
+    innerByGroup.set(group.boundary.id, normalized);
+    const width = Math.max(...group.members.map((node) => normalized[node.id].x + node.width));
+    const height = Math.max(...group.members.map((node) => normalized[node.id].y + node.height));
+    return {
+      id: group.boundary.id,
+      width: Math.max(260, width + ARCHITECTURE_GROUP_PAD_X * 2),
+      height: Math.max(180, height + ARCHITECTURE_GROUP_PAD_Y + ARCHITECTURE_GROUP_PAD_X),
+    };
+  });
+
+  const connectedIds = new Set<string>();
+  for (const edge of document.edges) {
+    connectedIds.add(edge.source);
+    connectedIds.add(edge.target);
+  }
+  const connectedFree = document.nodes.filter((node) => (
+    node.shape !== "boundary"
+    && !architectureTopLevelBoundaryId(node.id, nodeById)
+    && connectedIds.has(node.id)
+  ));
+  const metaNodes = [
+    ...groupMetaNodes,
+    ...connectedFree.map((node) => ({ id: node.id, width: node.width, height: node.height })),
+  ];
+  const metaNodeIds = new Set(metaNodes.map((node) => node.id));
+  const metaId = (nodeId: string) => {
+    const groupId = architectureTopLevelBoundaryId(nodeId, nodeById);
+    if (groupId && metaNodeIds.has(groupId)) return groupId;
+    return metaNodeIds.has(nodeId) ? nodeId : undefined;
+  };
+  const seenMetaEdges = new Set<string>();
+  const metaEdges: Array<{ source: string; target: string }> = [];
+  for (const edge of document.edges) {
+    const sourceId = metaId(edge.source);
+    const targetId = metaId(edge.target);
+    if (!sourceId || !targetId || sourceId === targetId) continue;
+    const key = `${sourceId}\0${targetId}`;
+    if (seenMetaEdges.has(key)) continue;
+    seenMetaEdges.add(key);
+    metaEdges.push({ source: sourceId, target: targetId });
+  }
+
+  const metaMargin = { x: ARCHITECTURE_ORIGIN, y: ARCHITECTURE_ORIGIN };
+  const metaLr = layoutDagreGraph(metaNodes, metaEdges, direction, ARCHITECTURE_META_SPACING, metaMargin);
+  const lrWidth = Math.max(...metaNodes.map((node) => metaLr[node.id].x + node.width))
+    - Math.min(...metaNodes.map((node) => metaLr[node.id].x));
+  const metaPositions = groups.length > 1 && lrWidth > ARCHITECTURE_LAYOUT_ROW_WIDTH
+    ? layoutDagreGraph(metaNodes, metaEdges, "top-to-bottom", ARCHITECTURE_META_SPACING, metaMargin)
+    : metaLr;
+
+  const positions: DiagramLayoutPositions = Object.fromEntries(
+    document.nodes.filter((node) => node.shape === "boundary").map((node) => [node.id, { x: node.x, y: node.y }]),
+  );
+  for (const group of groups) {
+    const inner = innerByGroup.get(group.boundary.id)!;
+    const origin = metaPositions[group.boundary.id];
+    for (const member of group.members) {
+      positions[member.id] = {
+        x: origin.x + ARCHITECTURE_GROUP_PAD_X + inner[member.id].x,
+        y: origin.y + ARCHITECTURE_GROUP_PAD_Y + inner[member.id].y,
+      };
+    }
+  }
+  for (const node of connectedFree) {
+    const position = metaPositions[node.id];
+    if (position) positions[node.id] = position;
+  }
+
+  wrapArchitectureGroups(document, positions);
+  placeUnpositionedArchitectureNodes(document, positions);
+  return positions;
+};
 
 const irNodeShape = (kind: DiagramKind, type: DiagramIrNodeType | undefined): DiagramNodeShape => {
   if (kind === "mind-map") return "topic";
@@ -457,6 +885,16 @@ const finalizeArchitectureLayout = (document: DiagramDocument) => {
     }
     placed.push(boundary);
   }
+
+  const minX = Math.min(...document.nodes.map((node) => node.x));
+  const minY = Math.min(...document.nodes.map((node) => node.y));
+  const deltaX = minX < ARCHITECTURE_ORIGIN ? ARCHITECTURE_ORIGIN - minX : 0;
+  const deltaY = minY < ARCHITECTURE_ORIGIN ? ARCHITECTURE_ORIGIN - minY : 0;
+  if (deltaX === 0 && deltaY === 0) return;
+  for (const node of document.nodes) {
+    node.x += deltaX;
+    node.y += deltaY;
+  }
 };
 
 export type DiagramLayoutStrategy = {
@@ -470,18 +908,18 @@ const DIAGRAM_LAYOUT_STRATEGIES: Record<DiagramKind, DiagramLayoutStrategy> = {
   "mind-map": {
     kind: "mind-map",
     layout: computeMindMapLayout,
-    viewport: { anchor: "root", maxScale: 1 },
+    viewport: { anchor: "root", maxScale: 1, minScale: DIAGRAM_READABLE_MIN_SCALE },
   },
   flowchart: {
     kind: "flowchart",
     layout: computeFlowchartLayout,
-    viewport: { anchor: "center", maxScale: 0.9 },
+    viewport: { anchor: "center", maxScale: 1, minScale: DIAGRAM_READABLE_MIN_SCALE },
   },
   architecture: {
     kind: "architecture",
     layout: computeArchitectureLayout,
     finalize: finalizeArchitectureLayout,
-    viewport: { anchor: "leftmost", maxScale: 0.84, minScale: 0.64 },
+    viewport: { anchor: "leftmost", maxScale: 1, minScale: DIAGRAM_READABLE_MIN_SCALE },
   },
 };
 
@@ -496,7 +934,11 @@ export const computeDiagramLayoutResult = (
   const strategy = DIAGRAM_LAYOUT_STRATEGIES[document.kind];
   const layoutDocument: DiagramDocument = {
     ...document,
-    nodes: document.nodes.map((node) => ({ ...node })),
+    nodes: document.nodes.map((node) => {
+      if (document.kind !== "flowchart") return { ...node };
+      const size = flowchartNodePresentation(node.shape, node.label);
+      return { ...node, width: size.width, height: size.height };
+    }),
     edges: document.edges.map((edge) => ({ ...edge })),
   };
   const positions = strategy.layout(layoutDocument, options);
@@ -545,7 +987,7 @@ export const compileDiagramIr = (ir: DiagramIr): DiagramDocument => {
   const nodes = ir.nodes.map((node, index) => {
     const shape = irNodeShape(ir.kind, node.type);
     const size = ir.kind === "mind-map"
-      ? compactMindMapNodeSize(node.label, !node.parentId)
+      ? mindMapNodePresentation(node.label, mindMapNodeRole(ir.nodes, node.id), ir.structure)
       : ir.kind === "architecture"
         ? compactArchitectureNodeSize(shape)
         : flowchartNodePresentation(shape, node.label);
@@ -579,7 +1021,12 @@ export const compileDiagramIr = (ir: DiagramIr): DiagramDocument => {
   const document: DiagramDocument = {
     schemaVersion: ir.kind === "architecture" ? ARCHITECTURE_DIAGRAM_SCHEMA_VERSION : DIAGRAM_SCHEMA_VERSION,
     kind: ir.kind,
-    ...(ir.theme ? { theme: ir.theme } : {}),
+    ...(ir.theme
+      ? { theme: ir.theme }
+      : ir.kind === "architecture"
+        ? {}
+        : { theme: DIAGRAM_DEFAULT_THEME }),
+    ...(ir.kind === "mind-map" && ir.structure ? { structure: ir.structure } : {}),
     nodes,
     edges,
   };

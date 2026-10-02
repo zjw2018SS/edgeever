@@ -14,7 +14,7 @@ import {
   setMemoDragPreview,
 } from "@/lib/app-helpers";
 import { cn } from "@/lib/utils";
-import type { Notebook } from "@edgeever/shared";
+import { formatNotebookMemoCount, type Notebook } from "@edgeever/shared";
 import {
   ContextMenu,
   ContextMenuContent,
@@ -37,8 +37,11 @@ export const NotebookTreeItem = ({
   onMoveNotebook,
   onMoveMemos,
   onDragScroll,
+  collapsedNotebookIds,
+  onOpenChange,
   expandSiblingsRequest,
   onExpandSiblings,
+  showDescendantNotes,
 }: {
   node: NotebookNode;
   depth: number;
@@ -50,12 +53,16 @@ export const NotebookTreeItem = ({
   onMoveNotebook: (notebookId: string, targetNotebookId: string, position: NotebookDropPosition) => void;
   onMoveMemos: (memoIds: string[], targetNotebookId: string) => void;
   onDragScroll: (event: DragEvent<HTMLDivElement>) => void;
+  collapsedNotebookIds: ReadonlySet<string>;
+  onOpenChange: (notebookId: string, open: boolean) => void;
   expandSiblingsRequest: { parentId: string | null; token: number } | null;
   onExpandSiblings: (parentId: string | null) => void;
+  showDescendantNotes: boolean;
 }) => {
   const { t } = useTranslation();
-  const [open, setOpen] = useState(true);
+  const open = !collapsedNotebookIds.has(node.id);
   const hasChildren = node.children.length > 0;
+  const showsSplitCount = !showDescendantNotes && hasChildren;
   const selected = node.id === selectedNotebookId;
   const isInbox = node.slug === "inbox";
   const hasSelectedDescendant = selectedNotebookId ? notebookTreeContainsId(node.children, selectedNotebookId) : false;
@@ -91,18 +98,12 @@ export const NotebookTreeItem = ({
   }, [actionsOpen]);
 
   useEffect(() => {
-    if (hasSelectedDescendant) {
-      setOpen(true);
-    }
-  }, [hasSelectedDescendant]);
-
-  useEffect(() => {
     if (!expandSiblingsRequest || expandSiblingsRequest.parentId !== node.parentId || !hasChildren) {
       return;
     }
 
-    setOpen(true);
-  }, [expandSiblingsRequest, hasChildren, node.parentId]);
+    onOpenChange(node.id, true);
+  }, [expandSiblingsRequest, hasChildren, node.id, node.parentId, onOpenChange]);
 
   const scheduleDragExpand = (position: NotebookDropPosition) => {
     if (!hasChildren || open || position !== "inside") {
@@ -116,7 +117,7 @@ export const NotebookTreeItem = ({
 
     expandTimerRef.current = window.setTimeout(() => {
       expandTimerRef.current = null;
-      setOpen(true);
+      onOpenChange(node.id, true);
     }, NOTEBOOK_DRAG_EXPAND_DELAY_MS);
   };
 
@@ -155,7 +156,7 @@ export const NotebookTreeItem = ({
 
     if (memoIds.length > 0) {
       onMoveMemos(memoIds, node.id);
-      setOpen(true);
+      onOpenChange(node.id, true);
       return;
     }
 
@@ -164,7 +165,7 @@ export const NotebookTreeItem = ({
     }
 
     onMoveNotebook(notebookId, node.id, position);
-    setOpen(true);
+    onOpenChange(node.id, true);
   };
 
   return (
@@ -174,7 +175,7 @@ export const NotebookTreeItem = ({
           <div
             data-notebook-id={node.id}
             className={cn(
-              "group relative flex h-9 items-center gap-1 rounded-md px-2 text-sm lg:text-[13px] transition-all duration-200 select-none",
+              "group relative flex h-9 items-center gap-1 rounded-md px-2 text-xs transition-all duration-200 select-none",
               selected
                 ? "edgeever-workspace-selection font-medium text-slate-950"
                 : hasSelectedDescendant
@@ -203,7 +204,7 @@ export const NotebookTreeItem = ({
               <button
                 className="flex h-6 w-5 items-center justify-center rounded hover:bg-slate-100/50 transition-colors"
                 type="button"
-                onClick={() => setOpen((value) => !value)}
+                onClick={() => onOpenChange(node.id, !open)}
                 title={t("notebookTree.expandCollapse")}
                 aria-label={open ? t("notebookTree.collapse", { name: node.name }) : t("notebookTree.expand", { name: node.name })}
                 aria-expanded={open}
@@ -223,9 +224,9 @@ export const NotebookTreeItem = ({
               data-notebook-tree-button
               className="flex min-w-0 flex-1 items-center gap-2 text-left"
               type="button"
-              aria-label={selected
-                ? t("notebookTree.currentWithCount", { name: node.name, count: node.memoCount })
-                : t("notebookTree.switchToWithCount", { name: node.name, count: node.memoCount })}
+              aria-label={showsSplitCount
+                ? t(selected ? "notebookTree.currentWithSplitCount" : "notebookTree.switchToWithSplitCount", { name: node.name, direct: node.directMemoCount, total: node.memoCount })
+                : t(selected ? "notebookTree.currentWithCount" : "notebookTree.switchToWithCount", { name: node.name, count: showDescendantNotes ? node.memoCount : node.directMemoCount })}
               aria-current={selected ? "page" : undefined}
               aria-expanded={hasChildren ? open : undefined}
               onClick={() => onSelect(node.id)}
@@ -250,19 +251,19 @@ export const NotebookTreeItem = ({
                 if (event.key === "ArrowRight" && hasChildren && !open) {
                   event.preventDefault();
                   event.stopPropagation();
-                  setOpen(true);
+                  onOpenChange(node.id, true);
                   return;
                 }
 
                 if (event.key === "ArrowLeft" && hasChildren && open) {
                   event.preventDefault();
                   event.stopPropagation();
-                  setOpen(false);
+                  onOpenChange(node.id, false);
                   return;
                 }
               }}
             >
-              <NotebookIcon className={cn("h-4 w-4 shrink-0 transition-colors duration-200", selected ? "text-emerald-600 dark:text-emerald-400" : hasSelectedDescendant ? "text-slate-700" : "text-slate-500")} />
+              <NotebookIcon className={cn("h-4 w-4 shrink-0 transition-colors duration-200", selected || hasSelectedDescendant ? "text-slate-700" : "text-slate-500")} />
               <span
                 className={cn(
                   "truncate font-medium transition-colors duration-200",
@@ -278,13 +279,13 @@ export const NotebookTreeItem = ({
                 )}
                 aria-hidden="true"
               >
-                {node.memoCount}
+                {formatNotebookMemoCount({ directCount: node.directMemoCount, totalCount: node.memoCount, hasChildren }, showDescendantNotes)}
               </span>
             </button>
             <div ref={actionsRef} className="relative shrink-0">
                 <button
                   className={cn(
-                    "hidden h-6 w-6 items-center justify-center rounded-md group-focus-within:flex group-hover:flex transition-colors duration-150",
+                    "edgeever-reveal-on-touch hidden h-6 w-6 items-center justify-center rounded-md group-focus-within:flex group-hover:flex transition-colors duration-150",
                     selected ? "hover:bg-slate-200" : "hover:bg-slate-100"
                   )}
                   type="button"
@@ -299,9 +300,9 @@ export const NotebookTreeItem = ({
                   <MoreHorizontal className="h-3.5 w-3.5" />
                 </button>
               {actionsOpen && (
-                <m.div className="absolute right-0 top-8 z-50 w-44 overflow-hidden rounded-md border border-slate-200 bg-white p-1 text-slate-950 shadow-lg" {...contentEnterMotion}>
+                <m.div className="absolute right-0 top-8 z-50 w-44 overflow-hidden rounded-md border border-slate-200 bg-card p-1 text-slate-950 shadow-lg" {...contentEnterMotion}>
                   <button
-                    className="flex h-9 w-full items-center gap-2 rounded-sm px-2 text-left text-sm outline-none hover:bg-slate-100"
+                    className="flex h-9 w-full items-center gap-2 rounded-sm px-2 text-left text-xs outline-none hover:bg-slate-100"
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
@@ -313,7 +314,7 @@ export const NotebookTreeItem = ({
                     {t("notebookTree.newChild")}
                   </button>
                   <button
-                    className="flex h-9 w-full items-center gap-2 rounded-sm px-2 text-left text-sm outline-none hover:bg-slate-100"
+                    className="flex h-9 w-full items-center gap-2 rounded-sm px-2 text-left text-xs outline-none hover:bg-slate-100"
                     type="button"
                     onClick={(event) => {
                       event.stopPropagation();
@@ -328,7 +329,7 @@ export const NotebookTreeItem = ({
                   <>
                     <div className="-mx-1 my-1 h-px bg-slate-100" />
                     <button
-                      className="flex h-9 w-full items-center gap-2 rounded-sm px-2 text-left text-sm text-rose-700 outline-none hover:bg-rose-50"
+                      className="flex h-9 w-full items-center gap-2 rounded-sm px-2 text-left text-xs text-rose-700 outline-none hover:bg-rose-50"
                       type="button"
                       onClick={(event) => {
                         event.stopPropagation();
@@ -352,16 +353,16 @@ export const NotebookTreeItem = ({
             )}
           </div>
         </ContextMenuTrigger>
-        <ContextMenuContent className="w-48 bg-white border border-slate-200 rounded-md py-1 shadow-md">
+        <ContextMenuContent className="w-48 bg-card border border-slate-200 rounded-md py-1 shadow-md">
           <ContextMenuItem
-            className="flex h-9 items-center gap-2 px-3 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer outline-none"
+            className="flex h-9 items-center gap-2 px-3 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer outline-none"
             onClick={() => onCreateNotebook(node.id)}
           >
             <Plus className="h-4 w-4" />
             {t("notebookTree.newChild")}
           </ContextMenuItem>
           <ContextMenuItem
-            className="flex h-9 items-center gap-2 px-3 text-sm text-slate-700 hover:bg-slate-50 cursor-pointer outline-none"
+            className="flex h-9 items-center gap-2 px-3 text-xs text-slate-700 hover:bg-slate-50 cursor-pointer outline-none"
             onClick={() => onRenameNotebook(node)}
           >
             <Pencil className="h-4 w-4" />
@@ -371,7 +372,7 @@ export const NotebookTreeItem = ({
             <>
               <ContextMenuSeparator className="my-1 h-px bg-slate-100" />
               <ContextMenuItem
-                className="flex h-9 items-center gap-2 px-3 text-sm text-rose-700 hover:bg-rose-50 cursor-pointer outline-none"
+                className="flex h-9 items-center gap-2 px-3 text-xs text-rose-700 hover:bg-rose-50 cursor-pointer outline-none"
                 onClick={() => onDeleteNotebook(node)}
               >
                 <Trash2 className="h-4 w-4" />
@@ -397,8 +398,11 @@ export const NotebookTreeItem = ({
               onMoveNotebook={onMoveNotebook}
               onMoveMemos={onMoveMemos}
               onDragScroll={onDragScroll}
+              collapsedNotebookIds={collapsedNotebookIds}
+              onOpenChange={onOpenChange}
               expandSiblingsRequest={expandSiblingsRequest}
               onExpandSiblings={onExpandSiblings}
+              showDescendantNotes={showDescendantNotes}
             />
           ))}
         </m.div>

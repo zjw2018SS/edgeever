@@ -4,16 +4,46 @@ import {
   ARCHITECTURE_RESOURCE_ICONS,
   TemplateCreateSchema,
   TemplateUpdateSchema,
+  compileInfographicNote,
   docToText,
+  hasInfographicDocumentMarker,
+  INFOGRAPHIC_SCHEMA_VERSION,
+  infographicFallbackMarkdown,
+  infographicSyntaxTemplate,
   markdownToDoc,
+  addTableField,
+  addTableRecord,
+  createTableId,
+  getTableSummary,
+  TABLE_ATTACHMENT_LIMIT,
+  TABLE_FIELD_LIMIT,
+  TABLE_FIELD_TYPES,
+  TABLE_RECORD_LIMIT,
+  TABLE_SCHEMA_VERSION,
+  hasTableDocumentMarker,
   parseDiagramDocument,
+  parseInfographicDocument,
+  parseTableDocument,
+  listTableAttachmentResourceIds,
+  removeTableField,
+  removeTableRecord,
   serializeDiagramDocument,
+  serializeInfographicDocument,
+  serializeTableDocument,
   stripDiagramDocumentMarker,
+  stripInfographicDocumentMarker,
+  stripTableDocumentMarker,
+  tableFallbackMarkdown,
+  updateTableField,
+  updateTableCell,
   type DiagramDocument,
   type DiagramNodeShape,
   type MemoDetail,
   type MemoSummary,
   type MemoUpdateInput,
+  type TableDocument,
+  type TableField,
+  type TableFieldType,
 } from "@edgeever/shared";
 import type { DiagramIr, DiagramIrNodeType } from "@edgeever/shared/diagram-layout";
 import { audit, auditStatement } from "./audit";
@@ -79,7 +109,7 @@ export type McpToolDependencies = {
   createMemoRecord: (
     database: DatabaseAdapter,
     workspaceId: string,
-    input: { notebookId: string; title?: string; contentMarkdown?: string; tags?: string[]; createdAt?: string; updatedAt?: string },
+    input: { notebookId: string; title?: string; contentJson?: unknown; contentMarkdown?: string; tags?: string[]; createdAt?: string; updatedAt?: string },
     actor: AuditActor,
     actorLabel: string,
   ) => Promise<MemoDetail>;
@@ -205,7 +235,7 @@ const DIAGRAM_IR_NODE_TYPES = new Set<DiagramIrNodeType>([
   "queue", "security", "external", "boundary",
 ]);
 const DIAGRAM_EDGE_KINDS = new Set(["dependency", "request", "async", "data"]);
-const DIAGRAM_MEMO_KEYS = new Set(["notebookId", "title", "kind", "theme", "layout", "tags", "nodes", "edges"]);
+const DIAGRAM_MEMO_KEYS = new Set(["notebookId", "title", "kind", "theme", "structure", "layout", "tags", "nodes", "edges"]);
 const DIAGRAM_NODE_KEYS = new Set(["id", "label", "type", "parentId", "resourceIcon"]);
 const DIAGRAM_EDGE_KEYS = new Set(["source", "target", "label", "type", "bidirectional"]);
 
@@ -276,8 +306,11 @@ const parseDiagramMemoIr = (args: Record<string, unknown>): DiagramIr => {
   if (args.edges !== undefined && (!Array.isArray(args.edges) || args.edges.length > 400)) {
     throw new AppError("invalid_params", "edges must be an array with at most 400 items", 400);
   }
-  if (args.theme !== undefined && !["brand", "ocean", "ink"].includes(String(args.theme))) {
-    throw new AppError("invalid_params", "theme must be brand, ocean, or ink", 400);
+  if (args.theme !== undefined && !["plain", "brand", "sun", "wa", "island", "rose", "mint", "cosmos", "tea", "naive", "macaron", "ocean", "ink", "classic", "paper"].includes(String(args.theme))) {
+    throw new AppError("invalid_params", "theme is not a supported diagram color scheme", 400);
+  }
+  if (args.structure !== undefined && !["map", "line", "capsule", "box", "circle", "ellipse", "hexagon", "logic", "tree", "brace", "org", "timeline", "fishbone"].includes(String(args.structure))) {
+    throw new AppError("invalid_params", "structure is not a supported mind-map shape", 400);
   }
   if (args.title !== undefined && (typeof args.title !== "string" || args.title.length > 160)) {
     throw new AppError("invalid_params", "title must be a string with at most 160 characters", 400);
@@ -298,6 +331,7 @@ const parseDiagramMemoIr = (args: Record<string, unknown>): DiagramIr => {
   const ir: DiagramIr = {
     kind: kind as DiagramIr["kind"],
     ...(args.theme === undefined ? {} : { theme: args.theme as DiagramIr["theme"] }),
+    ...(args.structure === undefined ? {} : { structure: args.structure as DiagramIr["structure"] }),
     ...(args.layout === undefined ? {} : { layout: args.layout as DiagramIr["layout"] }),
     nodes: args.nodes.map(parseDiagramNode),
     edges: (args.edges as unknown[] | undefined)?.map(parseDiagramEdge),
@@ -354,6 +388,7 @@ const diagramNodeType = (shape: DiagramNodeShape): DiagramIrNodeType => shape;
 const diagramSemanticGraph = (document: DiagramDocument, includeLayout = false) => ({
   kind: document.kind,
   ...(document.theme ? { theme: document.theme } : {}),
+  ...(document.structure ? { structure: document.structure } : {}),
   nodes: document.nodes.map((node) => ({
     id: node.id,
     label: node.label,
@@ -376,6 +411,242 @@ const memoWithoutDiagramPayload = (memo: MemoDetail) => {
   const contentMarkdown = stripDiagramDocumentMarker(memo.contentMarkdown);
   const contentJson = markdownToDoc(contentMarkdown);
   return { ...memo, contentMarkdown, contentJson, contentText: docToText(contentJson) };
+};
+
+const memoWithoutTablePayload = (memo: MemoDetail) => {
+  const contentMarkdown = stripTableDocumentMarker(memo.contentMarkdown);
+  const contentJson = markdownToDoc(contentMarkdown);
+  return { ...memo, contentMarkdown, contentJson, contentText: docToText(contentJson) };
+};
+
+const memoWithoutInfographicPayload = (memo: MemoDetail) => {
+  const contentMarkdown = stripInfographicDocumentMarker(memo.contentMarkdown);
+  const contentJson = markdownToDoc(contentMarkdown);
+  return { ...memo, contentMarkdown, contentJson, contentText: docToText(contentJson) };
+};
+
+const requiredTableRevision = (value: unknown) => {
+  if (!Number.isSafeInteger(value) || (value as number) < 0) {
+    throw new AppError("invalid_params", "expectedRevision must be a non-negative integer", 400);
+  }
+  return value as number;
+};
+
+const tableCellPatch = async (
+  db: DatabaseAdapter,
+  memoId: string,
+  document: TableDocument,
+  value: unknown,
+  allowEmpty: boolean,
+) => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new AppError("invalid_params", "cells must be an object keyed by field ID", 400);
+  }
+  const cells = value as Record<string, unknown>;
+  const normalized: Record<string, unknown> = {};
+  if (!allowEmpty && Object.keys(cells).length === 0) {
+    throw new AppError("invalid_params", "cells must include at least one field", 400);
+  }
+  const fields = new Map(document.fields.map((field) => [field.id, field]));
+  for (const [fieldId, cell] of Object.entries(cells)) {
+    const field = fields.get(fieldId);
+    if (!field) throw new AppError("invalid_params", `Unknown table field: ${fieldId}`, 400);
+    if (field.type === "attachment") {
+      if (!Array.isArray(cell) || cell.length > TABLE_ATTACHMENT_LIMIT || cell.some((id) => typeof id !== "string")) {
+        throw new AppError("invalid_params", `${fieldId} requires an array of up to ${TABLE_ATTACHMENT_LIMIT} resource IDs`, 400);
+      }
+      if (new Set(cell).size !== cell.length) {
+        throw new AppError("invalid_params", `${fieldId} contains duplicate resource IDs`, 400);
+      }
+      const attachments = [];
+      for (const resourceId of cell) {
+        const resource = await db.prepare(
+          `SELECT id, filename, mime_type, byte_size FROM resources
+           WHERE id = ? AND memo_id = ? AND kind = 'attachment' AND is_deleted = 0`,
+        ).bind(resourceId, memoId).first<{ id: string; filename: string | null; mime_type: string | null; byte_size: number }>();
+        if (!resource) throw new AppError("invalid_params", `Attachment resource not found in this memo: ${resourceId}`, 400);
+        attachments.push({
+          resourceId: resource.id,
+          filename: resource.filename ?? "attachment",
+          mimeType: resource.mime_type ?? "application/octet-stream",
+          byteSize: resource.byte_size,
+        });
+      }
+      normalized[fieldId] = attachments;
+      continue;
+    }
+    if (field.type === "checkbox") {
+      if (typeof cell !== "boolean") throw new AppError("invalid_params", `${fieldId} requires a boolean`, 400);
+    } else if (field.type === "number") {
+      if (cell !== null && (typeof cell !== "number" || !Number.isFinite(cell))) {
+        throw new AppError("invalid_params", `${fieldId} requires a finite number or null`, 400);
+      }
+    } else if (cell !== null && (typeof cell !== "string" || cell.length > 2000)) {
+      throw new AppError("invalid_params", `${fieldId} requires a string of at most 2000 characters or null`, 400);
+    }
+    if (field.type === "select" && cell && !field.options?.includes(cell as string)) {
+      throw new AppError("invalid_params", `${fieldId} requires an existing option`, 400);
+    }
+    if (field.type === "date" && cell && !/^\d{4}-\d{2}-\d{2}$/.test(cell as string)) {
+      throw new AppError("invalid_params", `${fieldId} requires YYYY-MM-DD`, 400);
+    }
+    if (field.type === "url" && cell && !/^https?:\/\//i.test(cell as string)) {
+      throw new AppError("invalid_params", `${fieldId} requires an http:// or https:// URL`, 400);
+    }
+    normalized[fieldId] = cell;
+  }
+  return normalized;
+};
+
+const tableObject = (value: unknown, label: string): Record<string, unknown> => {
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new AppError("invalid_params", `${label} must be an object`, 400);
+  }
+  return value as Record<string, unknown>;
+};
+
+const tableFieldName = (value: unknown) => {
+  const name = typeof value === "string" ? value.replace(/\s+/g, " ").trim() : "";
+  if (!name || name.length > 80) {
+    throw new AppError("invalid_params", "Field name must have 1–80 characters", 400);
+  }
+  return name;
+};
+
+const tableFieldType = (value: unknown): TableFieldType => {
+  if (typeof value !== "string" || !TABLE_FIELD_TYPES.includes(value as TableFieldType)) {
+    throw new AppError("invalid_params", "Unsupported table field type", 400);
+  }
+  return value as TableFieldType;
+};
+
+const tableFieldOptions = (value: unknown) => {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 40) {
+    throw new AppError("invalid_params", "Select fields require 1–40 options", 400);
+  }
+  const options = value.map((option) => tableFieldName(option));
+  if (new Set(options.map((option) => option.toLocaleLowerCase())).size !== options.length) {
+    throw new AppError("invalid_params", "Select options must be unique", 400);
+  }
+  return options;
+};
+
+const tableFieldInput = (value: unknown): TableField => {
+  const input = tableObject(value, "field");
+  if (Object.keys(input).some((key) => !["name", "type", "options"].includes(key))) {
+    throw new AppError("invalid_params", "field must include only name, type, or options", 400);
+  }
+  const type = tableFieldType(input.type);
+  if (type !== "select" && input.options !== undefined) {
+    throw new AppError("invalid_params", "Only select fields can have options", 400);
+  }
+  return {
+    id: createTableId("fld"),
+    name: tableFieldName(input.name),
+    type,
+    ...(type === "select" ? { options: tableFieldOptions(input.options) } : {}),
+  };
+};
+
+const ensureUniqueTableFieldName = (document: TableDocument, name: string, exceptId?: string) => {
+  if (document.fields.some((field) => field.id !== exceptId && field.name.toLocaleLowerCase() === name.toLocaleLowerCase())) {
+    throw new AppError("invalid_params", `Duplicate table field name: ${name}`, 400);
+  }
+};
+
+const tableFieldPatch = (current: TableField, value: unknown): Partial<Pick<TableField, "name" | "type" | "options">> => {
+  const changes = tableObject(value, "changes");
+  if (!Object.keys(changes).length || Object.keys(changes).some((key) => !["name", "type", "options"].includes(key))) {
+    throw new AppError("invalid_params", "changes must include only name, type, or options", 400);
+  }
+  const type = changes.type === undefined ? current.type : tableFieldType(changes.type);
+  if (type !== "select" && changes.options !== undefined) {
+    throw new AppError("invalid_params", "Only select fields can have options", 400);
+  }
+  if (type === "select" && current.type !== "select" && changes.options === undefined) {
+    throw new AppError("invalid_params", "Changing to select requires options", 400);
+  }
+  return {
+    ...(changes.name === undefined ? {} : { name: tableFieldName(changes.name) }),
+    ...(changes.type === undefined ? {} : { type }),
+    ...(type === "select" && changes.options !== undefined ? { options: tableFieldOptions(changes.options) } : {}),
+  };
+};
+
+const validTableValueForField = (field: TableField, value: unknown) => {
+  if (value === null || value === "") return true;
+  if (field.type === "select") return typeof value === "string" && Boolean(field.options?.includes(value));
+  if (field.type === "date") return typeof value === "string" && /^\d{4}-\d{2}-\d{2}$/.test(value);
+  if (field.type === "url") return typeof value === "string" && /^https?:\/\//i.test(value);
+  return true;
+};
+
+const applyTableSchemaOperations = (document: TableDocument, value: unknown) => {
+  if (!Array.isArray(value) || value.length < 1 || value.length > 40) {
+    throw new AppError("invalid_params", "operations must include 1–40 changes", 400);
+  }
+  let next = document;
+  for (const valueItem of value) {
+    const item = tableObject(valueItem, "operation");
+    if (item.op === "add_field") {
+      if (next.fields.length >= TABLE_FIELD_LIMIT) throw new AppError("table_field_limit", "Table field limit reached", 409);
+      const field = tableFieldInput(item.field);
+      ensureUniqueTableFieldName(next, field.name);
+      next = addTableField(next, field);
+    } else if (item.op === "update_field") {
+      const fieldId = getRequiredString(item.fieldId, "fieldId");
+      const current = next.fields.find((field) => field.id === fieldId);
+      if (!current) throw new AppError("not_found", `Table field not found: ${fieldId}`, 404);
+      const patch = tableFieldPatch(current, item.changes);
+      if (patch.name !== undefined) ensureUniqueTableFieldName(next, patch.name, fieldId);
+      next = updateTableField(next, fieldId, patch);
+      const updated = next.fields.find((field) => field.id === fieldId)!;
+      if (updated.type !== "select" && updated.options !== undefined) {
+        next = { ...next, fields: next.fields.map((field) => field.id === fieldId ? { id: field.id, name: field.name, type: field.type } : field) };
+      }
+      const finalField = next.fields.find((field) => field.id === fieldId)!;
+      if ((patch.type !== undefined || patch.options !== undefined) && ["select", "date", "url"].includes(finalField.type)) {
+        next = {
+          ...next,
+          records: next.records.map((record) => validTableValueForField(finalField, record.cells[fieldId])
+            ? record
+            : { ...record, cells: { ...record.cells, [fieldId]: "" } }),
+        };
+      }
+    } else if (item.op === "remove_field") {
+      const fieldId = getRequiredString(item.fieldId, "fieldId");
+      if (!next.fields.some((field) => field.id === fieldId)) {
+        throw new AppError("not_found", `Table field not found: ${fieldId}`, 404);
+      }
+      if (next.fields.length === 1) throw new AppError("invalid_params", "A table must keep at least one field", 400);
+      next = removeTableField(next, fieldId);
+    } else {
+      throw new AppError("invalid_params", "Unknown table schema operation", 400);
+    }
+  }
+  if (!parseTableDocument(serializeTableDocument(next))) {
+    throw new AppError("invalid_params", "Schema changes produced an invalid table", 400);
+  }
+  return next;
+};
+
+const tableSchemaImpact = (before: TableDocument, after: TableDocument) => {
+  const afterRecords = new Map(after.records.map((record) => [record.id, record]));
+  let changedCellCount = 0;
+  for (const record of before.records) {
+    const nextRecord = afterRecords.get(record.id);
+    for (const field of before.fields) {
+      const oldValue = record.cells[field.id];
+      const newValue = nextRecord?.cells[field.id];
+      const hasValue = Array.isArray(oldValue) ? oldValue.length > 0 : oldValue !== null && oldValue !== "";
+      if (hasValue && JSON.stringify(oldValue) !== JSON.stringify(newValue)) changedCellCount += 1;
+    }
+  }
+  const retainedResources = listTableAttachmentResourceIds(after);
+  return {
+    changedCellCount,
+    removedAttachmentCount: [...listTableAttachmentResourceIds(before)].filter((id) => !retainedResources.has(id)).length,
+  };
 };
 
 type MutableDiagramEdge = ReturnType<typeof diagramSemanticGraph>["edges"][number];
@@ -446,8 +717,8 @@ const applyDiagramOperations = async (
       const index = findNodeIndex(nodeId);
       const previous = nodes[index];
       const candidate: Record<string, unknown> = { ...previous, ...operation.changes, id: nodeId };
-      if (operation.changes.parentId === null) delete candidate.parentId;
-      if (operation.changes.resourceIcon === null) delete candidate.resourceIcon;
+      if (operation.changes.parentId === null || operation.changes.parentId === "") delete candidate.parentId;
+      if (operation.changes.resourceIcon === null || operation.changes.resourceIcon === "") delete candidate.resourceIcon;
       const next = parseDiagramNode(candidate, operationIndex);
       nodes[index] = next;
       if (operation.changes.label !== undefined || operation.changes.type !== undefined) resizedNodeIds.add(nodeId);
@@ -509,8 +780,8 @@ const applyDiagramOperations = async (
       const index = findEdgeIndex(edgeId);
       const candidate: Record<string, unknown> = { ...edges[index], ...operation.changes };
       delete candidate.id;
-      if (operation.changes.label === null) delete candidate.label;
-      if (operation.changes.type === null) delete candidate.type;
+      if (operation.changes.label === null || operation.changes.label === "") delete candidate.label;
+      if (operation.changes.type === null || operation.changes.type === "") delete candidate.type;
       if (operation.changes.bidirectional === null) delete candidate.bidirectional;
       edges[index] = { id: edgeId, ...parseDiagramEdge(candidate, operationIndex) };
       counts.updatedEdges += 1;
@@ -541,6 +812,7 @@ const applyDiagramOperations = async (
   const validatedIr = parseDiagramMemoIr({
     kind: current.kind,
     ...(current.theme ? { theme: current.theme } : {}),
+    ...(current.structure ? { structure: current.structure } : {}),
     nodes,
     edges: edges.map(({ id: _id, ...edge }) => edge),
   });
@@ -677,9 +949,143 @@ export const callMcpTool = async (
       }
 
       const diagram = parseDiagramDocument(memo.contentMarkdown);
-      return diagram
-        ? { memo: memoWithoutDiagramPayload(memo), diagram: diagramSemanticGraph(diagram) }
-        : { memo };
+      if (diagram) return { memo: memoWithoutDiagramPayload(memo), diagram: diagramSemanticGraph(diagram) };
+      const table = parseTableDocument(memo.contentMarkdown);
+      if (table) return { memo: memoWithoutTablePayload(memo), structuredTable: getTableSummary(memo.contentMarkdown).tablePreview };
+      const infographic = parseInfographicDocument(memo.contentMarkdown);
+      if (infographic) {
+        return {
+          memo: memoWithoutInfographicPayload(memo),
+          infographic: { template: infographicSyntaxTemplate(infographic.syntax) },
+        };
+      }
+      return { memo };
+    }
+    case "get_table_records": {
+      assertScope(auth, "read:memos");
+      const memoId = getRequiredString(args.memoId, "memoId");
+      const memo = await getMemoDetail(c.env.storage.db, auth.workspaceId, memoId);
+      if (!memo) throw new AppError("not_found", "Memo not found", 404);
+      const document = parseTableDocument(memo.contentMarkdown);
+      if (!document) throw new AppError("not_table", "Memo is not a structured table", 400);
+      const recordId = getOptionalString(args.recordId);
+      const offset = clampNumber(Number(args.offset ?? 0), 0, document.records.length);
+      const limit = clampNumber(Number(args.limit ?? 50), 1, 100);
+      const record = recordId ? document.records.find((item) => item.id === recordId) : undefined;
+      if (recordId && !record) throw new AppError("not_found", "Table record not found", 404);
+      return {
+        memoId,
+        revision: memo.revision,
+        fields: document.fields,
+        records: record ? [record] : document.records.slice(offset, offset + limit),
+        totalRecords: document.records.length,
+        ...(recordId ? {} : { offset, limit }),
+      };
+    }
+    case "create_table_memo": {
+      assertScope(auth, "write:memos");
+      const notebookId = getRequiredString(args.notebookId, "notebookId");
+      const title = getRequiredString(args.title, "title");
+      if (title.length > 160) throw new AppError("invalid_params", "title must have at most 160 characters", 400);
+      if (!Array.isArray(args.fields) || args.fields.length < 1 || args.fields.length > TABLE_FIELD_LIMIT) {
+        throw new AppError("invalid_params", `fields must include 1–${TABLE_FIELD_LIMIT} fields`, 400);
+      }
+      const document: TableDocument = { schemaVersion: TABLE_SCHEMA_VERSION, fields: [], records: [], view: { filters: [], sort: null } };
+      for (const value of args.fields) {
+        const field = tableFieldInput(value);
+        ensureUniqueTableFieldName(document, field.name);
+        document.fields.push(field);
+      }
+      const memo = await createMemoRecord(c.env.storage.db, auth.workspaceId, {
+        notebookId,
+        title,
+        contentMarkdown: serializeTableDocument(document),
+        contentJson: markdownToDoc(tableFallbackMarkdown(document)),
+        tags: getOptionalStringArray(args.tags),
+      }, getAuditActor(c), getActorLabel(c));
+      return { memo: memoWithoutTablePayload(memo), fields: document.fields, revision: memo.revision };
+    }
+    case "update_table_schema": {
+      assertScope(auth, "write:memos");
+      const memoId = getRequiredString(args.memoId, "memoId");
+      const expectedRevision = requiredTableRevision(args.expectedRevision);
+      const memo = await getMemoDetail(c.env.storage.db, auth.workspaceId, memoId);
+      if (!memo) throw new AppError("not_found", "Memo not found", 404);
+      const document = parseTableDocument(memo.contentMarkdown);
+      if (!document) throw new AppError("not_table", "Memo is not a structured table", 400);
+      if (memo.revision !== expectedRevision) {
+        throw new AppError("revision_conflict", "Table changed since it was read. Read it again before writing.", 409);
+      }
+      const next = applyTableSchemaOperations(document, args.operations);
+      const impact = tableSchemaImpact(document, next);
+      if (args.dryRun === true) {
+        const oldIds = new Set(document.fields.map((field) => field.id));
+        return {
+          dryRun: true,
+          memoId,
+          revision: memo.revision,
+          fields: next.fields.map((field) => ({ ...field, id: oldIds.has(field.id) ? field.id : null })),
+          ...impact,
+        };
+      }
+      if (impact.changedCellCount > 0 && args.allowDataChanges !== true) {
+        throw new AppError("table_data_changes_required", `${impact.changedCellCount} existing cell values would change. Preview with dryRun, then pass allowDataChanges=true.`, 409);
+      }
+      const result = await updateMemoRecord(c.env.storage.db, auth.workspaceId, memoId, {
+        expectedRevision,
+        contentMarkdown: serializeTableDocument(next),
+        contentJson: markdownToDoc(tableFallbackMarkdown(next)),
+        tags: memo.tags,
+      }, getAuditActor(c), getActorLabel(c));
+      if (!("memo" in result)) throw new AppError(result.error, result.message, result.status ?? 409);
+      return { memoId, revision: result.memo.revision, fields: next.fields, ...impact };
+    }
+    case "add_table_record":
+    case "update_table_record":
+    case "delete_table_record": {
+      assertScope(auth, "write:memos");
+      const memoId = getRequiredString(args.memoId, "memoId");
+      const expectedRevision = requiredTableRevision(args.expectedRevision);
+      const memo = await getMemoDetail(c.env.storage.db, auth.workspaceId, memoId);
+      if (!memo) throw new AppError("not_found", "Memo not found", 404);
+      const document = parseTableDocument(memo.contentMarkdown);
+      if (!document) throw new AppError("not_table", "Memo is not a structured table", 400);
+      if (memo.revision !== expectedRevision) {
+        throw new AppError("revision_conflict", "Table changed since it was read. Read it again before writing.", 409);
+      }
+      let next = document;
+      let recordId: string;
+      if (name === "add_table_record") {
+        if (document.records.length >= TABLE_RECORD_LIMIT) throw new AppError("table_record_limit", "Table record limit reached", 409);
+        const cells = await tableCellPatch(c.env.storage.db, memoId, document, args.cells, true);
+        recordId = createTableId("rec");
+        next = addTableRecord(document, recordId);
+        for (const [fieldId, value] of Object.entries(cells)) next = updateTableCell(next, recordId, fieldId, value);
+      } else {
+        recordId = getRequiredString(args.recordId, "recordId");
+        if (!document.records.some((record) => record.id === recordId)) {
+          throw new AppError("not_found", "Table record not found", 404);
+        }
+        if (name === "update_table_record") {
+          const cells = await tableCellPatch(c.env.storage.db, memoId, document, args.cells, false);
+          for (const [fieldId, value] of Object.entries(cells)) next = updateTableCell(next, recordId, fieldId, value);
+        } else {
+          next = removeTableRecord(document, recordId);
+        }
+      }
+      const result = await updateMemoRecord(c.env.storage.db, auth.workspaceId, memoId, {
+        expectedRevision,
+        contentMarkdown: serializeTableDocument(next),
+        contentJson: markdownToDoc(tableFallbackMarkdown(next)),
+        tags: memo.tags,
+      }, getAuditActor(c), getActorLabel(c));
+      if (!("memo" in result)) throw new AppError(result.error, result.message, result.status ?? 409);
+      return {
+        memoId,
+        revision: result.memo.revision,
+        recordId,
+        ...(name === "delete_table_record" ? { deleted: true } : { record: next.records.find((item) => item.id === recordId) }),
+      };
     }
     case "create_memo": {
       assertScope(auth, "write:memos");
@@ -696,6 +1102,27 @@ export const callMcpTool = async (
       }, actor, actorLabel);
 
       return { memo };
+    }
+    case "create_infographic_memo": {
+      assertScope(auth, "write:memos");
+      const notebookId = getRequiredString(args.notebookId, "notebookId");
+      const template = getRequiredString(args.template, "template");
+      const compiled = compileInfographicNote(template, args.data);
+      if (!compiled.ok) throw new AppError("invalid_params", compiled.message, 400);
+      const document = { schemaVersion: INFOGRAPHIC_SCHEMA_VERSION, syntax: compiled.syntax };
+      const memo = await createMemoRecord(c.env.storage.db, auth.workspaceId, {
+        notebookId,
+        title: getOptionalString(args.title) ?? compiled.title,
+        contentMarkdown: serializeInfographicDocument(document),
+        contentJson: markdownToDoc(infographicFallbackMarkdown(document)),
+        tags: getOptionalStringArray(args.tags),
+      }, getAuditActor(c), getActorLabel(c));
+      return {
+        memo: memoWithoutInfographicPayload(memo),
+        infographic: true,
+        template,
+        revision: memo.revision,
+      };
     }
     case "create_diagram_memo": {
       assertScope(auth, "write:memos");
@@ -787,6 +1214,20 @@ export const callMcpTool = async (
           throw new AppError(
             "diagram_update_required",
             "Diagram content cannot be replaced through update_memo. Use update_diagram for semantic changes.",
+            400,
+          );
+        }
+        if (existing && hasTableDocumentMarker(existing.contentMarkdown)) {
+          throw new AppError(
+            "table_update_required",
+            "Structured table content cannot be replaced through update_memo.",
+            400,
+          );
+        }
+        if (existing && hasInfographicDocumentMarker(existing.contentMarkdown)) {
+          throw new AppError(
+            "infographic_update_required",
+            "Infographic content cannot be replaced through update_memo.",
             400,
           );
         }

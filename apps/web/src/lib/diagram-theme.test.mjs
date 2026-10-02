@@ -1,4 +1,6 @@
+import { readFileSync } from "node:fs";
 import { describe, expect, test } from "bun:test";
+import { DIAGRAM_CANVAS_DARK, DIAGRAM_CANVAS_LIGHT } from "@edgeever/shared";
 import { DIAGRAM_THEME_PALETTES, resolveDiagramPalette } from "./diagram-theme.ts";
 
 const channel = (value) => {
@@ -26,5 +28,26 @@ describe("diagram appearance palettes", () => {
       expect(contrast(dark.nodeText, dark.nodeFill)).toBeGreaterThanOrEqual(4.5);
       expect(contrast(dark.topicText, dark.topicFill)).toBeGreaterThanOrEqual(3);
     }
+  });
+
+  test("treats retired mint and forest themes as forest green", () => {
+    expect(resolveDiagramPalette("ocean", "light")).toEqual(resolveDiagramPalette("brand", "light"));
+    expect(resolveDiagramPalette("ink", "dark")).toEqual(resolveDiagramPalette("brand", "dark"));
+  });
+
+  test("keeps selectable color schemes distinct from forest green", () => {
+    expect(Object.keys(DIAGRAM_THEME_PALETTES)).toEqual(expect.arrayContaining([
+      "plain", "brand", "cosmos", "dune", "slate", "prism", "sunrise", "marine", "blossom", "mint", "macaron",
+    ]));
+    expect(resolveDiagramPalette("plain", "light").topicFill).toBe("#707070");
+    const globals = readFileSync(new URL("../styles/globals.css", import.meta.url), "utf8");
+    expect(globals).toContain(`--workspace-editor: ${DIAGRAM_CANVAS_LIGHT};`);
+    expect(globals).toContain(`--workspace-editor: ${DIAGRAM_CANVAS_DARK};`);
+    for (const theme of Object.keys(DIAGRAM_THEME_PALETTES)) {
+      expect(resolveDiagramPalette(theme, "light").canvas).toBe(DIAGRAM_CANVAS_LIGHT);
+      expect(resolveDiagramPalette(theme, "dark").canvas).toBe(DIAGRAM_CANVAS_DARK);
+    }
+    expect(resolveDiagramPalette("mint", "light").topicFill).not.toBe(resolveDiagramPalette("brand", "light").topicFill);
+    expect(resolveDiagramPalette("ocean", "light")).toEqual(resolveDiagramPalette("brand", "light"));
   });
 });

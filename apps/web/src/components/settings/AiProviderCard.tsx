@@ -3,7 +3,7 @@ import { useMutation } from "@tanstack/react-query";
 import type { AiDiscoveredModel, AiModelConfig, AiProvider, AiProviderConfig } from "@edgeever/shared";
 import { CheckCircle2, Loader2, MoreHorizontal, Pencil, Plus, Search, Trash2 } from "lucide-react";
 import { useTranslation } from "react-i18next";
-import { aiErrorMessage, isLegacyProviderDisplayName, providerDefaults } from "@/components/settings/ai-provider-options";
+import { aiErrorMessage, isLegacyProviderDisplayName, providerDefaults, trimAiText } from "@/components/settings/ai-provider-options";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -38,10 +38,10 @@ export const AiProviderCard = ({ provider: saved, defaultDisplayName, defaultMod
   const datalistId = `ai-models-${useId().replaceAll(":", "")}`;
   const effectiveDisplayName = isLegacyProviderDisplayName(saved.displayName, saved.provider)
     ? defaultDisplayName
-    : saved.displayName;
+    : (saved.displayName || defaultDisplayName);
   const [provider, setProvider] = useState<AiProvider>(saved.provider);
   const [displayName, setDisplayName] = useState(effectiveDisplayName);
-  const [baseUrl, setBaseUrl] = useState(saved.baseUrl);
+  const [baseUrl, setBaseUrl] = useState(saved.baseUrl ?? "");
   const [apiKey, setApiKey] = useState("");
   const [modelId, setModelId] = useState("");
   const [discoveredModels, setDiscoveredModels] = useState<AiDiscoveredModel[]>([]);
@@ -51,7 +51,7 @@ export const AiProviderCard = ({ provider: saved, defaultDisplayName, defaultMod
   useEffect(() => {
     setProvider(saved.provider);
     setDisplayName(effectiveDisplayName);
-    setBaseUrl(saved.baseUrl);
+    setBaseUrl(saved.baseUrl ?? "");
   }, [effectiveDisplayName, saved.baseUrl, saved.provider]);
 
   const saveMutation = useMutation({
@@ -92,8 +92,9 @@ export const AiProviderCard = ({ provider: saved, defaultDisplayName, defaultMod
   });
   const addModelMutation = useMutation({
     mutationFn: () => {
-      const discovered = discoveredModels.find((item) => item.modelId === modelId.trim());
-      return api.addAiModel(saved.id, { modelId: modelId.trim(), ...(discovered ? { displayName: discovered.displayName } : {}) });
+      const nextModelId = trimAiText(modelId);
+      const discovered = discoveredModels.find((item) => item.modelId === nextModelId);
+      return api.addAiModel(saved.id, { modelId: nextModelId, ...(discovered ? { displayName: discovered.displayName } : {}) });
     },
     onSuccess: async () => {
       setModelId("");
@@ -110,13 +111,11 @@ export const AiProviderCard = ({ provider: saved, defaultDisplayName, defaultMod
   const modelBusy = discoverMutation.isPending || addModelMutation.isPending || deleteModelMutation.isPending;
   const cardBusy = toggleMutation.isPending || deleteMutation.isPending || modelBusy;
   const connectionDirty = provider !== saved.provider
-    || displayName.trim() !== effectiveDisplayName
-    || baseUrl.trim() !== saved.baseUrl
+    || trimAiText(displayName) !== trimAiText(effectiveDisplayName)
+    || trimAiText(baseUrl) !== trimAiText(saved.baseUrl)
     || Boolean(apiKey);
   const connectionError = saveMutation.error ?? testMutation.error;
   const cardError = toggleMutation.error ?? deleteMutation.error ?? discoverMutation.error ?? addModelMutation.error ?? deleteModelMutation.error;
-  const providerLabel = t(`aiModel.providers.${saved.provider}`);
-
   const handleProviderChange = (next: AiProvider) => {
     const previous = providerDefaults[provider];
     const defaults = providerDefaults[next];
@@ -126,7 +125,7 @@ export const AiProviderCard = ({ provider: saved, defaultDisplayName, defaultMod
   const resetConnectionForm = () => {
     setProvider(saved.provider);
     setDisplayName(effectiveDisplayName);
-    setBaseUrl(saved.baseUrl);
+    setBaseUrl(saved.baseUrl ?? "");
     setApiKey("");
     saveMutation.reset();
     testMutation.reset();
@@ -163,16 +162,18 @@ export const AiProviderCard = ({ provider: saved, defaultDisplayName, defaultMod
       <div className="flex flex-col gap-2.5 p-3.5 sm:p-4">
         <div className="flex items-center justify-between gap-3">
           <div className="flex min-w-0 flex-wrap items-center gap-2">
-            <span className="truncate text-sm font-semibold text-slate-900">{effectiveDisplayName}</span>
-            <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
-              {providerLabel}
-            </span>
-            <span className="max-w-full truncate font-mono text-[11px] text-slate-400">
+            <span className="truncate text-xs font-normal text-slate-900">{effectiveDisplayName}</span>
+            {saved.credentialsUnavailable ? (
+              <span className="rounded-md bg-amber-50 px-2 py-0.5 text-xs font-normal text-amber-800">
+                {t("aiModel.savedCredentialsUnavailableBadge")}
+              </span>
+            ) : null}
+            <span className="max-w-full truncate font-mono text-xs text-slate-400">
               {formatBaseUrl(saved.baseUrl)}
             </span>
           </div>
           <div className="flex shrink-0 items-center gap-1.5">
-            <span className="hidden text-[11px] text-slate-400 sm:inline">
+            <span className="hidden text-xs text-slate-400 sm:inline">
               {saved.isEnabled ? t("aiModel.serviceEnabledStatus") : t("aiModel.serviceDisabledStatus")}
             </span>
             <Switch
@@ -239,12 +240,9 @@ export const AiProviderCard = ({ provider: saved, defaultDisplayName, defaultMod
                   key={model.id}
                   className="inline-flex h-6.5 max-w-full min-w-0 items-center gap-1.5 rounded-md border border-slate-200/80 bg-slate-50/80 pl-2 pr-1 text-xs text-slate-700"
                 >
-                  <span className="min-w-0 truncate font-medium">{model.displayName}</span>
-                  {model.modelId !== model.displayName ? (
-                    <span className="min-w-0 truncate font-mono text-[11px] text-slate-400">({model.modelId})</span>
-                  ) : null}
+                  <span className="min-w-0 truncate font-normal">{model.displayName}</span>
                   {model.id === defaultModelId ? (
-                    <span className="shrink-0 rounded border border-emerald-200/60 bg-emerald-50 px-1 py-0.5 text-[10px] font-medium text-emerald-700">
+                    <span className="shrink-0 rounded border border-slate-200 bg-slate-100 px-1 py-0.5 text-xs font-normal text-slate-700">
                       {t("aiModel.defaultBadge")}
                     </span>
                   ) : null}
@@ -254,7 +252,7 @@ export const AiProviderCard = ({ provider: saved, defaultDisplayName, defaultMod
                         type="button"
                         variant="ghost"
                         size="icon"
-                        className="h-4 w-4 shrink-0 text-slate-400 hover:bg-white hover:text-rose-600"
+                        className="h-4 w-4 shrink-0 text-slate-400 hover:bg-card hover:text-rose-600"
                         disabled={readOnly || deleteModelMutation.isPending}
                         onClick={() => deleteModel(model)}
                         aria-label={`${t("aiModel.removeModel")}: ${model.displayName}`}
@@ -275,7 +273,7 @@ export const AiProviderCard = ({ provider: saved, defaultDisplayName, defaultMod
 
       {cardError ? (
         <p className="border-t px-4 py-3 text-xs font-medium text-rose-600" role="alert">
-          {aiErrorMessage(cardError, t("aiModel.failed"), t("aiModel.encryptionKeyMissing"))}
+          {aiErrorMessage(cardError, t("aiModel.failed"), t("aiModel.encryptionKeyMissing"), t("aiModel.savedCredentialsUnavailable"))}
         </p>
       ) : null}
 
@@ -325,7 +323,7 @@ export const AiProviderCard = ({ provider: saved, defaultDisplayName, defaultMod
             ) : null}
             {connectionError ? (
               <p className="text-xs font-medium text-rose-600" role="alert">
-                {aiErrorMessage(connectionError, t("aiModel.failed"), t("aiModel.encryptionKeyMissing"))}
+                {aiErrorMessage(connectionError, t("aiModel.failed"), t("aiModel.encryptionKeyMissing"), t("aiModel.savedCredentialsUnavailable"))}
               </p>
             ) : null}
             <DialogFooter className="gap-2 sm:space-x-0">
@@ -333,12 +331,12 @@ export const AiProviderCard = ({ provider: saved, defaultDisplayName, defaultMod
               <Button
                 type="button"
                 variant="outline"
-                disabled={connectionBusy || !baseUrl.trim() || (!saved.hasApiKey && !apiKey) || saved.models.length === 0}
+                disabled={connectionBusy || !trimAiText(baseUrl) || (!saved.hasApiKey && !apiKey) || saved.models.length === 0}
                 onClick={() => testMutation.mutate()}
               >
                 {testMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{t("aiModel.test")}
               </Button>
-              <Button type="submit" variant="solid" disabled={readOnly || connectionBusy || !connectionDirty || !displayName.trim() || !baseUrl.trim()}>
+              <Button type="submit" variant="solid" disabled={readOnly || connectionBusy || !connectionDirty || !trimAiText(displayName) || !trimAiText(baseUrl)}>
                 {saveMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : null}{t("common.save")}
               </Button>
             </DialogFooter>
@@ -367,7 +365,7 @@ export const AiProviderCard = ({ provider: saved, defaultDisplayName, defaultMod
             </Field>
             {discoverMutation.error || addModelMutation.error ? (
               <p className="text-xs font-medium text-rose-600" role="alert">
-                {aiErrorMessage(discoverMutation.error ?? addModelMutation.error, t("aiModel.failed"), t("aiModel.encryptionKeyMissing"))}
+                {aiErrorMessage(discoverMutation.error ?? addModelMutation.error, t("aiModel.failed"), t("aiModel.encryptionKeyMissing"), t("aiModel.savedCredentialsUnavailable"))}
               </p>
             ) : null}
             <DialogFooter className="gap-2 sm:space-x-0 sm:justify-between">
@@ -381,7 +379,7 @@ export const AiProviderCard = ({ provider: saved, defaultDisplayName, defaultMod
               </Button>
               <div className="flex flex-col-reverse gap-2 sm:flex-row">
                 <Button type="button" variant="outline" onClick={() => handleAddModelChange(false)}>{t("common.cancel")}</Button>
-                <Button type="submit" variant="solid" disabled={readOnly || modelBusy || !modelId.trim()}>
+                <Button type="submit" variant="solid" disabled={readOnly || modelBusy || !trimAiText(modelId)}>
                   {addModelMutation.isPending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plus className="h-4 w-4" />}{t("aiModel.addModel")}
                 </Button>
               </div>
@@ -402,7 +400,7 @@ const formatBaseUrl = (baseUrl: string) => {
 };
 
 const Field = ({ label, hint, children }: { label: string; hint?: string; children: ReactNode }) => (
-  <label className="grid gap-1.5 text-sm font-medium text-slate-700">
+  <label className="grid gap-1.5 text-xs font-normal leading-5 text-slate-700">
     {label}{children}{hint ? <span className="text-xs font-normal leading-4 text-slate-500">{hint}</span> : null}
   </label>
 );

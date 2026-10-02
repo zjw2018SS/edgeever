@@ -86,12 +86,14 @@ const useAutoCenterSelectedScrollRow = (visible: boolean, selectedKey: string) =
 
 export const NotebookPickerModal = ({
   activeNotebookId,
+  includeAllNotes = true,
   notebooks,
   onClose,
   onSelect,
   visible,
 }: {
   activeNotebookId: string;
+  includeAllNotes?: boolean;
   notebooks: Notebook[];
   onClose: () => void;
   onSelect: (notebookId: string) => void;
@@ -179,6 +181,7 @@ export const NotebookPickerModal = ({
             ) : null}
           </View>
 
+          {includeAllNotes ? (
           <Pressable
             accessibilityLabel={activeNotebookId === ALL_NOTES_ID ? "当前：全部笔记" : "切换到全部笔记"}
             accessibilityRole="button"
@@ -194,6 +197,7 @@ export const NotebookPickerModal = ({
             </View>
             {activeNotebookId === ALL_NOTES_ID ? <Check color="#0f172a" size={18} /> : null}
           </Pressable>
+          ) : null}
 
           <View style={styles.notebookPickerSectionHeader}>
             <Text style={styles.label}>{searchQuery ? "匹配的笔记本" : "笔记本"}</Text>
@@ -316,7 +320,7 @@ export const SmartTagButton = ({
       Alert.alert(
         translate("智能标签生成失败"),
         error instanceof ApiRequestError && error.code === "ai_not_configured"
-          ? translate("请先在“AI 集成”中配置默认模型。")
+          ? translate("请先在“模型与代理”中配置默认模型。")
           : error instanceof Error
             ? error.message
             : translate("AI 标签建议生成失败。")
@@ -351,16 +355,24 @@ export const SmartTagButton = ({
 };
 
 export const TagPickerModal = ({
+  allowCreate = true,
   dataScope,
+  description = "点选已有标签，或输入名称创建新标签",
+  maxSelections = 24,
   onChange,
   onClose,
   selectedTags,
+  title = "选择标签",
   visible,
 }: {
+  allowCreate?: boolean;
   dataScope: string;
+  description?: string;
+  maxSelections?: number;
   onChange: (tags: string[]) => void;
   onClose: () => void;
   selectedTags: string[];
+  title?: string;
   visible: boolean;
 }) => {
   const { translate } = useMobileLocale();
@@ -382,10 +394,14 @@ export const TagPickerModal = ({
     }
   }, [visible]);
 
-  const commit = (nextTags: string[]) => onChange(Array.from(new Set(nextTags)).slice(0, 24));
-  const toggleTag = (name: string) => commit(
-    selectedTags.includes(name) ? selectedTags.filter((tag) => tag !== name) : [...selectedTags, name]
-  );
+  const commit = (nextTags: string[]) => onChange(Array.from(new Set(nextTags)).slice(0, maxSelections));
+  const toggleTag = (name: string) => {
+    if (selectedTags.includes(name)) {
+      commit(selectedTags.filter((tag) => tag !== name));
+      return;
+    }
+    commit(maxSelections === 1 ? [name] : [...selectedTags, name]);
+  };
   const createTag = () => {
     const additions = parseTags(normalizedSearch);
     if (additions.length === 0) return;
@@ -400,8 +416,8 @@ export const TagPickerModal = ({
           <View style={styles.actionSheetHandle} />
           <View style={styles.notebookPickerHeader}>
             <View style={styles.notebookPickerHeaderText}>
-              <Text style={styles.actionSheetTitle}>{translate("选择标签")}</Text>
-              <Text style={styles.panelLabel}>{translate("点选已有标签，或输入名称创建新标签")}</Text>
+              <Text style={styles.actionSheetTitle}>{translate(title)}</Text>
+              <Text style={styles.panelLabel}>{translate(description)}</Text>
             </View>
             <Pressable accessibilityLabel="关闭" accessibilityRole="button" onPress={onClose} style={styles.notebookPickerCloseButton}>
               <X color="#0f172a" size={20} />
@@ -423,18 +439,18 @@ export const TagPickerModal = ({
             <View style={styles.notebookPickerSearchBox}>
               <Search color="#64748b" size={18} />
               <TextInput
-                accessibilityLabel="搜索或输入新标签"
+                accessibilityLabel={allowCreate ? "搜索或输入新标签" : "搜索标签"}
                 autoCapitalize="none"
                 autoCorrect={false}
                 onChangeText={setSearchText}
-                onSubmitEditing={createTag}
-                placeholder="搜索或输入新标签"
+                onSubmitEditing={allowCreate ? createTag : undefined}
+                placeholder={allowCreate ? "搜索或输入新标签" : "搜索标签"}
                 placeholderTextColor="#94a3b8"
-                returnKeyType="done"
+                returnKeyType={allowCreate ? "done" : "search"}
                 style={styles.notebookPickerSearchInput}
                 value={searchText}
               />
-              {normalizedSearch && !exactMatch && selectedTags.length < 24 ? (
+              {allowCreate && normalizedSearch && !exactMatch && selectedTags.length < maxSelections ? (
                 <Pressable accessibilityLabel={`新建标签 ${normalizedSearch}`} accessibilityRole="button" onPress={createTag}>
                   <Text style={styles.tagPickerCreateText}>{translate("新建")}</Text>
                 </Pressable>
@@ -446,7 +462,7 @@ export const TagPickerModal = ({
             ) : visibleTags.length === 0 ? (
               <View style={styles.emptyInlinePanel}>
                 <Tag color="#94a3b8" size={28} />
-                <Text style={styles.mutedText}>{translate("没有匹配的现有标签，可直接新建")}</Text>
+                <Text style={styles.mutedText}>{translate(allowCreate ? "没有匹配的现有标签，可直接新建" : "没有匹配的标签")}</Text>
               </View>
             ) : visibleTags.map((tag) => {
               const selected = selectedTags.includes(tag.name);

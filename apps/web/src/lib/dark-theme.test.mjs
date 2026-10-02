@@ -12,7 +12,6 @@ const BUILT_IN_EDITOR_THEMES = [
   "outline-emerald",
   "wechat-green",
   "modern-mint",
-  "marxico",
 ];
 
 const readDarkThemeTokens = (theme) => {
@@ -42,14 +41,27 @@ describe("dark theme contracts", () => {
     const css = readFileSync(new URL("../styles/globals.css", import.meta.url), "utf8");
     const memoCard = readFileSync(new URL("../components/MemoCard.tsx", import.meta.url), "utf8");
     expect(css).toContain(":root.dark .edgeever-public-share .ProseMirror");
-    expect(css).toContain("color: #f8fafc;");
-    expect(css).toContain('[class~="divide-slate-100"]');
-    expect(css).toContain('[class~="text-emerald-700"]');
+    expect(css).toContain("color: hsl(var(--foreground));");
     expect(css).toContain("--workspace-memo-divider: #3b4540;");
     expect(css).toContain(":root.dark .edgeever-workspace-memo-list .edgeever-memo-divider");
     expect(memoCard).toContain("edgeever-memo-divider");
     expect(memoCard).not.toContain("dark:lg:border-slate-300");
     expect(memoCard).not.toContain("dark:lg:border-slate-300/70");
+  });
+
+  test("components do not add a second dark: color path on top of theme tokens", () => {
+    const css = readFileSync(new URL("../styles/globals.css", import.meta.url), "utf8");
+    const notebookPane = readFileSync(new URL("../components/NotebookPane.tsx", import.meta.url), "utf8");
+    const companion = readFileSync(new URL("../components/CompanionActionCard.tsx", import.meta.url), "utf8");
+    const badge = readFileSync(new URL("../components/ui/badge.tsx", import.meta.url), "utf8");
+
+    expect(css).not.toContain('[class~="bg-white"]');
+    expect(css).not.toContain('[class~="bg-slate-50"]');
+    expect(css).not.toContain('[class~="text-slate-700"]');
+    expect(css).not.toContain("--dark-utility-alpha");
+    expect(notebookPane).not.toContain("dark:bg-slate-");
+    expect(companion).not.toContain("dark:text-slate-");
+    expect(badge).not.toContain("dark:bg-slate-");
   });
 
   test("workspace dark surfaces stay neutral and bundled editor themes blend into the canvas", () => {
@@ -65,6 +77,21 @@ describe("dark theme contracts", () => {
     expect(contrastRatio("#9aa9a0", "#191e1b")).toBeGreaterThanOrEqual(4.5);
   });
 
+  test("dark chrome uses workspace tokens instead of leftover blue-slate", () => {
+    const css = readFileSync(new URL("../styles/globals.css", import.meta.url), "utf8");
+
+    expect(css).toContain("--tooltip-bg: #2c3330;");
+    expect(css).toContain("--scrollbar-thumb: rgb(137 150 142 / 0.38);");
+    expect(css).toContain("--search-match: rgb(22 160 110 / 0.32);");
+    expect(css).toContain(":root.dark .ProseMirror .edgeever-mermaid-preview");
+    expect(css).toContain("background: var(--workspace-editor);");
+    expect(css).toContain("border-color: var(--workspace-divider);");
+    expect(css).not.toContain("background: #0f172a;");
+    expect(css).not.toContain("border-color: #334155;");
+    expect(css).toContain(":root.dark .edgeever-paper");
+    expect(css).toContain("--tw-ring-offset-color: var(--workspace-canvas);");
+  });
+
   test("every bundled editor theme has a complete accessible dark palette", () => {
     for (const theme of BUILT_IN_EDITOR_THEMES) {
       const { tokens } = readDarkThemeTokens(theme);
@@ -78,15 +105,6 @@ describe("dark theme contracts", () => {
     }
   });
 
-  test("Marxico keeps note content legible in dark mode", () => {
-    const { css, tokens } = readDarkThemeTokens("marxico");
-
-    expect(css).toContain(':root.dark .edgeever-editor[data-editor-theme="marxico"]');
-    expect(css).toContain("color: var(--editor-theme-text);");
-    expect(contrastRatio(tokens.text, "#191e1b")).toBeGreaterThanOrEqual(4.5);
-    expect(contrastRatio(tokens.heading, "#191e1b")).toBeGreaterThanOrEqual(4.5);
-  });
-
   test("automatic Mermaid themes follow the resolved appearance", () => {
     expect(resolveMermaidTheme("auto", "light")).toBe("zinc-light");
     expect(resolveMermaidTheme("auto", "dark")).toBe("zinc-dark");
@@ -97,7 +115,9 @@ describe("dark theme contracts", () => {
     const editorPane = readFileSync(new URL("../components/EditorPane.tsx", import.meta.url), "utf8");
     const editorThemeCss = readFileSync(new URL("../styles/editor-themes/base.css", import.meta.url), "utf8");
 
-    expect(editorPane).toContain("useEditorTheme()");
+    expect(editorPane).toContain('data-editor-theme="default"');
+    expect(editorPane).toContain("noteProseCssVariables(noteProse)");
+    expect(editorPane).not.toContain("useEditorTheme()");
     expect(editorPane).not.toContain("resolvedTheme");
     expect(editorThemeCss).toContain(':root.dark .edgeever-editor[data-editor-theme="custom"]:not([data-editor-theme="default"])');
     expect(editorThemeCss).toContain("--editor-theme-dark-bg");

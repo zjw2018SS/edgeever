@@ -79,7 +79,9 @@ describe("native release planning", () => {
       "scripts/run-desktop-builder.mjs",
       "scripts/sign-windows-update-manifest.mjs",
       "scripts/verify-windows-update-release.mjs",
+      "scripts/verify-desktop-cross-version-startup.mjs",
       "scripts/verify-packaged-desktop-startup.mjs",
+      "scripts/verify-renderer-origin-migration.mjs",
     ];
     expect(planNativeRelease("desktop", changedFiles)).toEqual({
       rebuild: true,
@@ -91,5 +93,43 @@ describe("native release planning", () => {
     expect(
       planNativeRelease("desktop", ["package.json", "release-summary.json", "AGENTS.md"]),
     ).toEqual({ rebuild: false, relevantChanges: [] });
+  });
+
+  test("rebuilds iOS for the native client or shared editor runtime", () => {
+    expect(
+      planNativeRelease("ios", [
+        "apps/ios/EdgeEver/App/RootView.swift",
+        "packages/shared/src/index.ts",
+        "apps/mobile/src/screens/LoginScreen.tsx",
+      ]),
+    ).toEqual({
+      rebuild: true,
+      relevantChanges: [
+        "apps/ios/EdgeEver/App/RootView.swift",
+        "packages/shared/src/index.ts",
+      ],
+    });
+  });
+
+  test("does not rebuild iOS for Android-only or documentation changes", () => {
+    expect(
+      planNativeRelease("ios", [
+        "apps/mobile/src/screens/LoginScreen.tsx",
+        "apps/ios/README.md",
+        "package.json",
+      ]),
+    ).toEqual({ rebuild: false, relevantChanges: [] });
+  });
+
+  test("rebuilds desktop when bundled sidecar migrations change", () => {
+    expect(
+      planNativeRelease("desktop", [
+        "migrations/0053_collapse_duplicate_inbox_notebooks.sql",
+        "apps/api/src/notebook-service.test.mjs",
+      ]),
+    ).toEqual({
+      rebuild: true,
+      relevantChanges: ["migrations/0053_collapse_duplicate_inbox_notebooks.sql"],
+    });
   });
 });

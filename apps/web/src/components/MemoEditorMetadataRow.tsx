@@ -5,6 +5,7 @@ import type { NotebookMoveOption } from "@/lib/app-helpers";
 import type { EdgeEverRepository } from "@/lib/repository";
 import { EditorTagPicker } from "@/components/EditorTagPicker";
 import { MobileNotebookSelectSheet } from "@/components/editor/EditorPaneChrome";
+import { cn } from "@/lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "@/components/ui/select";
 
 type MemoEditorMetadataRowProps = {
@@ -18,6 +19,8 @@ type MemoEditorMetadataRowProps = {
   tagsText: string;
   title: string;
   trailingActions?: ReactNode;
+  rowClassName?: string;
+  includeMobileSheet?: boolean;
   onMobileNotebookPickerOpenChange: (open: boolean) => void;
   onNotebookChange: (notebookId: string) => void;
   onTagsChange: (tagsText: string) => void;
@@ -34,6 +37,8 @@ export const MemoEditorMetadataRow = ({
   tagsText,
   title,
   trailingActions,
+  rowClassName,
+  includeMobileSheet = true,
   onMobileNotebookPickerOpenChange,
   onNotebookChange,
   onTagsChange,
@@ -44,9 +49,9 @@ export const MemoEditorMetadataRow = ({
 
   return (
     <>
-      <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
+      <div className={cn("flex flex-wrap items-center gap-1.5 sm:gap-2", rowClassName)}>
         <button
-          className="flex h-7 min-w-0 max-w-full items-center gap-1 rounded-md border border-transparent bg-transparent px-1.5 text-xs font-medium text-slate-600 outline-none transition hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 focus-visible:border-emerald-300 focus-visible:ring-2 focus-visible:ring-emerald-500/20 disabled:opacity-50 sm:hidden"
+          className="flex h-7 min-w-0 max-w-full items-center gap-1 rounded-md border border-transparent bg-transparent px-1.5 text-xs font-medium text-slate-600 outline-none transition hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 focus-visible:border-slate-400 focus-visible:ring-2 focus-visible:ring-slate-900/10 disabled:opacity-50 sm:hidden"
           type="button"
           disabled={disabled || notebookUpdatePending}
           aria-label={t("editor.currentNotebookAria", { name: currentNotebookLabel })}
@@ -55,16 +60,16 @@ export const MemoEditorMetadataRow = ({
           <span className="min-w-0 truncate">{currentNotebookLabel}</span>
           <ChevronDown className="h-3.5 w-3.5 shrink-0 text-slate-400" />
         </button>
-        <div className="hidden min-w-[9rem] max-w-[18rem] sm:block">
+        <div className="hidden min-w-0 max-w-[18rem] shrink overflow-hidden sm:block">
           <Select
             value={selectedNotebookId}
             disabled={disabled || notebookUpdatePending}
             onValueChange={onNotebookChange}
           >
-            <SelectTrigger className="h-8 min-w-0 whitespace-nowrap border-transparent bg-transparent px-2 text-sm font-medium text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900">
+            <SelectTrigger className="h-7 w-auto max-w-full min-w-0 overflow-hidden border-transparent bg-transparent px-2 text-xs font-medium text-slate-600 hover:border-slate-200 hover:bg-slate-50 hover:text-slate-900 [&_svg]:shrink-0 [&>span]:min-w-0 [&>span]:truncate">
               <SelectValue placeholder={t("editor.notebookPlaceholder")}>{currentNotebookLabel}</SelectValue>
             </SelectTrigger>
-            <SelectContent className="max-h-60 rounded-md border border-slate-200 bg-white py-1 shadow-md">
+            <SelectContent className="max-h-60 rounded-md border border-slate-200 bg-card py-1 shadow-md">
               {notebookOptions.map((notebook) => (
                 <SelectItem key={notebook.id} value={notebook.id}>
                   {notebook.selectLabel}
@@ -84,7 +89,7 @@ export const MemoEditorMetadataRow = ({
         {trailingActions}
       </div>
 
-      {mobileNotebookPickerOpen ? (
+      {includeMobileSheet && mobileNotebookPickerOpen ? (
         <MobileNotebookSelectSheet
           isUpdating={notebookUpdatePending}
           options={notebookOptions}

@@ -52,7 +52,7 @@ export const ExecutionHistoryItemCard = ({
     : t("executionHistory.device", { id: item.executorId.slice(-8) });
 
   return (
-    <article className="rounded-lg border border-slate-200 bg-white p-3">
+    <article className="rounded-lg border border-slate-200 bg-card p-3">
       <div className="flex flex-wrap items-start justify-between gap-2">
         <div className="min-w-0">
           {item.title ? <p className="truncate text-sm font-semibold text-slate-900">{item.title}</p> : null}
@@ -81,7 +81,7 @@ export const ExecutionHistoryItemCard = ({
         </div>
       </dl>
       {item.errorMessage ? (
-        <pre className="mt-3 whitespace-pre-wrap break-words rounded-md bg-rose-50 p-2 font-mono text-[11px] leading-5 text-rose-700">
+        <pre className="mt-3 whitespace-pre-wrap break-words rounded-md bg-rose-50 p-2 font-mono text-xs leading-5 text-rose-700">
           {item.errorMessage}
         </pre>
       ) : null}

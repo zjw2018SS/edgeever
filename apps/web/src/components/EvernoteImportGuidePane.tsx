@@ -14,8 +14,8 @@ export const EvernoteImportGuidePane = ({ onClose, onOpenExecutionCenter }: { on
   const htmlContent = useMemo(() => marked.parse(markdown) as string, [markdown]);
 
   return (
-    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-x-hidden bg-slate-50">
-      <header className="flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-end justify-between border-b border-slate-200 bg-white px-4 pb-3 pt-[env(safe-area-inset-top)] lg:h-16 lg:items-center lg:px-6 lg:pb-0 lg:pt-0">
+    <div className="flex h-full min-h-0 min-w-0 flex-col overflow-x-hidden bg-workspace-canvas">
+      <header className="flex h-[calc(3.5rem+env(safe-area-inset-top))] shrink-0 items-end justify-between border-b border-slate-200 bg-card px-4 pb-3 pt-[env(safe-area-inset-top)] lg:h-16 lg:items-center lg:px-6 lg:pb-0 lg:pt-0">
         <div className="flex min-w-0 items-center gap-3">
           <Button
             size="icon"
@@ -29,7 +29,7 @@ export const EvernoteImportGuidePane = ({ onClose, onOpenExecutionCenter }: { on
           </Button>
           <div className="min-w-0">
             <h1 className={`flex items-center gap-2 ${WORKSPACE_PAGE_TITLE_CLASSNAME}`}>
-              <HelpCircle className="h-4 w-4 text-emerald-700" />
+              <HelpCircle className="h-4 w-4 text-slate-900" />
               {t("evernoteGuide.title")}
             </h1>
             <p className="mt-0.5 truncate text-xs font-medium text-slate-400">
@@ -41,7 +41,7 @@ export const EvernoteImportGuidePane = ({ onClose, onOpenExecutionCenter }: { on
       </header>
 
       <main className="min-w-0 flex-1 overflow-x-hidden overflow-y-auto px-4 py-4 lg:px-6 lg:py-6">
-        <article className="mx-auto w-full min-w-0 max-w-4xl rounded-lg border border-slate-200 bg-white p-6 shadow-sm sm:p-8">
+        <article className="mx-auto w-full min-w-0 max-w-4xl rounded-lg border border-slate-200 bg-card p-6 shadow-sm sm:p-8">
           <div
             className="markdown-content max-w-none"
             dangerouslySetInnerHTML={{ __html: htmlContent }}

@@ -2,18 +2,19 @@ import "katex/dist/katex.min.css";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useTranslation } from "react-i18next";
 import { EditorContent, useEditor } from "@tiptap/react";
-import StarterKit from "@tiptap/starter-kit";
 import { PdfAttachment } from "@/components/editor/PdfAttachment";
 import { FileAttachment } from "@/components/editor/FileAttachment";
 import Image from "@tiptap/extension-image";
-import { TaskItem, TaskList } from "@tiptap/extension-list";
 import { mergeAttributes } from "@tiptap/core";
 import Placeholder from "@tiptap/extension-placeholder";
-import { TableKit } from "@tiptap/extension-table";
-import { createExcerpt, docToMarkdown, docToText, emptyDoc, getImageReferrerPolicy, ImageGallery, isPdfAttachment, MergeDivider, PluginEmbed, type MemoDetail, type MemoEditSession, type Notebook, type TagSummary, type TiptapDoc } from "@edgeever/shared";
+import { createExcerpt, createEdgeEverDocumentExtensions, docToMarkdown, docToText, emptyDoc, getImageReferrerPolicy, isPdfAttachment, wrapDetailsContentHtml, type MemoDetail, type MemoEditSession, type Notebook, type TagSummary, type TiptapDoc } from "@edgeever/shared";
 import { createEdgeEverMathematics } from "@edgeever/shared/mathematics";
-import { getMobileEditorInputAttributes, getMobileEditorPlaceholder } from "@edgeever/shared/mobile-editor";
+import { NEW_IMAGE_WIDTH_PERCENT } from "@edgeever/shared/image-display";
+import { insertUploadedResources } from "@/lib/resource-insertion";
+import { getResourceInsertionTarget } from "@/lib/resource-insertion-target";
+import { clearMobileEditorUndoHistory, getMobileEditorInputAttributes, getMobileEditorPlaceholder } from "@edgeever/shared/mobile-editor";
 import { EdgeEverLink } from "@edgeever/shared/editor-link";
+import { createInlineFieldExtension } from "@/components/editor/InlineField";
 import {
   MobileEditorFallback,
   MobileEditorHeader,
@@ -195,26 +196,23 @@ export const MobileStandaloneTiptapEditor = ({
     };
   }, [memoId, readLocalDraft]);
 
+  const inlineFieldExtension = useMemo(() => createInlineFieldExtension(locale), [locale]);
   const editor = useEditor({
     extensions: [
-      StarterKit.configure({ link: false }),
+      ...createEdgeEverDocumentExtensions({
+        mathematics: createEdgeEverMathematics(),
+        starterKit: { link: false },
+        image: ProtectedExternalImage.configure({
+          allowBase64: false,
+          inline: false,
+        }),
+        pdf: PdfAttachment,
+        file: FileAttachment,
+        table: { table: { renderWrapper: true } },
+      }),
       EdgeEverLink,
-      PdfAttachment,
-      FileAttachment,
-      TaskList,
-      TaskItem.configure({ nested: true }),
-      MergeDivider,
-      PluginEmbed,
-      ...createEdgeEverMathematics(),
+      inlineFieldExtension,
       ThemeBlock,
-      ImageGallery,
-      ProtectedExternalImage.configure({
-        allowBase64: false,
-        inline: false,
-      }),
-      TableKit.configure({
-        table: { renderWrapper: true },
-      }),
       Placeholder.configure({
         placeholder: getMobileEditorPlaceholder(locale),
       }),
@@ -222,6 +220,7 @@ export const MobileStandaloneTiptapEditor = ({
     content: emptyDoc(),
     editorProps: {
       attributes: getMobileEditorInputAttributes("edgeever-mobile-tiptap-content"),
+      transformPastedHTML: (html) => wrapDetailsContentHtml(html),
       handleKeyDown: (view, event) => {
         if (event.key !== "Backspace" || !preserveEmptyListIndentOnBackspace(view.state, view.dispatch)) {
           return false;
@@ -630,15 +629,16 @@ export const MobileStandaloneTiptapEditor = ({
       setSaveStateStable("uploading");
       const { resource } = await uploadMobileEditorResource(currentMemo.id, uploadFile);
       if (resource.kind === "image") {
-        editor
-          .chain()
-          .focus()
-          .setImage({
+        const target = getResourceInsertionTarget(editor.state.selection);
+        editor.chain().focus().command(insertUploadedResources(target, [{
+          type: "image",
+          attrs: {
             src: resource.url,
             alt: file.name,
             title: file.name,
-          })
-          .run();
+            width: NEW_IMAGE_WIDTH_PERCENT,
+          },
+        }], true)).run();
       } else if (isPdfAttachment(file.type, resource.filename || file.name)) {
         editor
           .chain()
@@ -789,6 +789,7 @@ export const MobileStandaloneTiptapEditor = ({
           tagsTextRef.current = draft.tagsText || "";
           contentJsonRef.current = draft.contentJson || emptyDoc();
           editor.commands.setContent(contentJsonRef.current, { emitUpdate: false });
+          clearMobileEditorUndoHistory(editor);
           dirtyRef.current = true;
           setSaveStateStable("local-draft");
           scheduleMetadataSave();
@@ -802,6 +803,7 @@ export const MobileStandaloneTiptapEditor = ({
           tagsTextRef.current = queuedTagsText;
           contentJsonRef.current = queuedPayload.contentJson || emptyDoc();
           editor.commands.setContent(contentJsonRef.current, { emitUpdate: false });
+          clearMobileEditorUndoHistory(editor);
           lastSavedSnapshotRef.current = JSON.stringify({
             title: queuedTitle,
             tagsText: queuedTagsText,
@@ -817,6 +819,7 @@ export const MobileStandaloneTiptapEditor = ({
           tagsTextRef.current = nextTagsText;
           contentJsonRef.current = nextContentJson;
           editor.commands.setContent(nextContentJson, { emitUpdate: false });
+          clearMobileEditorUndoHistory(editor);
           lastSavedSnapshotRef.current = JSON.stringify({
             title: nextTitle,
             tagsText: nextTagsText,
@@ -933,6 +936,14 @@ export const MobileStandaloneTiptapEditor = ({
   const currentNotebookLabel =
     notebookOptions.find((notebook) => notebook.id === memo?.notebookId)?.name ?? t("editor.notebookFallback");
   const activeListItemType = editor?.isActive("taskItem") ? "taskItem" : "listItem";
+  const historyAvailable = (command: "undo" | "redo") => {
+    if (!editor || editor.isDestroyed) return false;
+    try {
+      return editor.can().chain().focus()[command]().run();
+    } catch {
+      return false;
+    }
+  };
   const canWrapIndentedParagraph = Boolean(editor && wrapIndentedParagraphInList(editor.state, undefined));
 
   const fallbackMarkdown = memo ? docToMarkdown(contentJsonRef.current) : "";
@@ -978,6 +989,8 @@ export const MobileStandaloneTiptapEditor = ({
 
         <MobileEditorToolbar
           disabled={editorActionDisabled}
+          undoAvailable={historyAvailable("undo")}
+          redoAvailable={historyAvailable("redo")}
           boldActive={Boolean(editor?.isActive("bold"))}
           bulletListActive={Boolean(editor?.isActive("bulletList"))}
           taskListActive={Boolean(editor?.isActive("taskList"))}
@@ -985,6 +998,8 @@ export const MobileStandaloneTiptapEditor = ({
           decreaseListIndentAvailable={Boolean(editor?.can().chain().focus().liftListItem(activeListItemType).run())}
           blockquoteActive={Boolean(editor?.isActive("blockquote"))}
           locale={locale}
+          onUndo={() => runEditorCommand(() => editor?.chain().focus().undo().run() ?? false)}
+          onRedo={() => runEditorCommand(() => editor?.chain().focus().redo().run() ?? false)}
           onPickImage={() => imageInputRef.current?.click()}
           onToggleBold={() => runEditorCommand(() => editor?.chain().focus().toggleBold().run() ?? false)}
           onToggleBulletList={() => runEditorCommand(() => (

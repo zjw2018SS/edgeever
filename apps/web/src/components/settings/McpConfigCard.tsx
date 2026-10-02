@@ -61,22 +61,21 @@ const McpExampleDialog = () => {
   return (
     <Dialog>
       <DialogTrigger asChild>
-        <Button size="sm" variant="outline" className="h-7 bg-white px-2.5 text-xs" type="button">
+        <Button size="sm" variant="outline" className="h-7 bg-card px-2.5 text-xs" type="button">
           {t("mcp.example")}
         </Button>
       </DialogTrigger>
       <DialogContent className="max-w-2xl gap-3 p-4 sm:p-5">
         <DialogHeader>
-          <DialogTitle className="text-base">{t("mcp.exampleTitle")}</DialogTitle>
+          <DialogTitle>{t("mcp.exampleTitle")}</DialogTitle>
         </DialogHeader>
-        <pre className="max-h-[55vh] overflow-auto rounded-md border border-slate-100 bg-slate-950 p-3 text-left text-[11px] leading-5 text-slate-100 sm:text-xs">
+        <pre className="max-h-[55vh] overflow-auto rounded-md border border-slate-100 bg-slate-950 p-3 text-left text-xs leading-5 text-slate-100 sm:text-xs">
           <code>{remoteExample}</code>
         </pre>
         <div className="flex justify-end">
           <Button
             size="md"
             variant="solid"
-            className="bg-emerald-600 text-white hover:bg-emerald-700"
             type="button"
             onClick={() => void handleCopy()}
           >
@@ -115,9 +114,9 @@ const AccessLevelPicker = ({ value, onChange }: AccessLevelPickerProps) => {
                 <label
                   htmlFor={inputId}
                   className={cn(
-                    "flex h-8 cursor-pointer select-none items-center gap-1.5 rounded-[5px] px-2.5 text-xs font-medium transition-all focus-within:ring-2 focus-within:ring-emerald-500/40",
+                    "flex h-8 cursor-pointer select-none items-center gap-1.5 rounded-[5px] px-2.5 text-xs font-normal transition-all focus-within:ring-2 focus-within:ring-slate-900/15",
                     checked
-                      ? "bg-white font-semibold text-emerald-800 shadow-sm"
+                      ? "bg-card text-slate-950 shadow-sm"
                       : "text-slate-600 hover:text-slate-900"
                   )}
                 >
@@ -132,7 +131,7 @@ const AccessLevelPicker = ({ value, onChange }: AccessLevelPickerProps) => {
                   />
                   <span
                     aria-hidden="true"
-                    className={cn("h-1.5 w-1.5 rounded-full", checked ? "bg-emerald-600" : "bg-slate-400")}
+                    className={cn("h-1.5 w-1.5 rounded-full", checked ? "bg-slate-950" : "bg-slate-400")}
                   />
                   {t(`mcp.accessLevels.${option}.label`)}
                 </label>
@@ -192,7 +191,7 @@ const TokenList = ({ tokens, availableScopes, newlyCreatedTokenId, isLoading, is
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-slate-200 divide-y divide-slate-100 bg-white">
+    <div className="overflow-hidden rounded-lg border border-slate-200 divide-y divide-slate-100 bg-card">
       {tokens.map((token) => {
         const accessLevel = getStoredTokenAccessLevel(token.scopes, availableScopes);
         const accessLabel = accessLevel === "legacy-custom"
@@ -210,13 +209,13 @@ const TokenList = ({ tokens, availableScopes, newlyCreatedTokenId, isLoading, is
           >
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
-                <span className="truncate text-xs font-semibold text-slate-900">{token.name}</span>
+                <span className="truncate text-xs font-normal text-slate-900">{token.name}</span>
                 {accessLevel === "legacy-custom" ? (
                   <TooltipProvider>
                     <Tooltip>
                       <TooltipTrigger asChild>
                         <span
-                          className="cursor-help rounded-md border border-slate-200/80 bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-emerald-500/40"
+                          className="cursor-help rounded-md border border-slate-200/80 bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-600 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-slate-900/15"
                           tabIndex={0}
                         >
                           {accessLabel}
@@ -232,7 +231,7 @@ const TokenList = ({ tokens, availableScopes, newlyCreatedTokenId, isLoading, is
                     className={cn(
                       "rounded-md px-2 py-0.5 text-xs font-normal",
                       accessLevel === "full"
-                        ? "border border-emerald-200/60 bg-emerald-50 text-emerald-700"
+                        ? "border border-slate-200 bg-slate-100 text-slate-700"
                         : "border border-slate-200/80 bg-slate-100 text-slate-600"
                     )}
                   >
@@ -257,7 +256,7 @@ const TokenList = ({ tokens, availableScopes, newlyCreatedTokenId, isLoading, is
                     <Button
                       size="sm"
                       variant="outline"
-                      className="h-8 gap-1.5 border-slate-200 bg-white px-2.5 text-xs font-normal text-slate-700 hover:bg-slate-50 hover:text-slate-900"
+                      className="h-8 gap-1.5 border-slate-200 bg-card px-2.5 text-xs font-normal text-slate-700 hover:bg-slate-50 hover:text-slate-900"
                       aria-label={token.token ? t("mcp.copyToken") : t("mcp.legacyTokenCannotCopy")}
                       disabled={token.isRevoked || !token.token}
                       onClick={() => void handleCopy(token, "token")}
@@ -283,7 +282,7 @@ const TokenList = ({ tokens, availableScopes, newlyCreatedTokenId, isLoading, is
                     <Button
                       size="sm"
                       variant="outline"
-                      className="h-8 gap-1.5 border-slate-200 bg-white px-2.5 text-xs font-normal text-slate-700 hover:bg-slate-50 hover:text-slate-900"
+                      className="h-8 gap-1.5 border-slate-200 bg-card px-2.5 text-xs font-normal text-slate-700 hover:bg-slate-50 hover:text-slate-900"
                       aria-label={token.token ? t("mcp.copyConfig") : t("mcp.legacyConfigCannotCopy")}
                       disabled={token.isRevoked || !token.token}
                       onClick={() => void handleCopy(token, "config")}
@@ -391,7 +390,7 @@ export const McpConfigCard = () => {
           <div className="rounded-lg border border-slate-200/70 bg-slate-50/50 p-3 sm:p-3.5">
             <form className="flex flex-col gap-2.5 sm:flex-row sm:items-center" onSubmit={handleSubmit}>
               <Input
-                className="h-9 min-w-0 flex-1 bg-white text-xs"
+                className="h-9 min-w-0 flex-1 bg-card text-xs"
                 value={name}
                 onChange={(event) => setName(event.target.value)}
                 placeholder={t("mcp.namePlaceholder")}
@@ -404,7 +403,7 @@ export const McpConfigCard = () => {
                 <Button
                   size="sm"
                   variant="solid"
-                  className="h-9 shrink-0 gap-1 bg-emerald-600 px-3.5 text-xs text-white hover:bg-emerald-700"
+                  className="h-9 shrink-0 gap-1 px-3.5 text-xs font-normal"
                   type="submit"
                   disabled={createMutation.isPending || !name.trim()}
                 >
@@ -418,10 +417,10 @@ export const McpConfigCard = () => {
           <section className="grid gap-3">
             <div className="flex items-center justify-between gap-3">
               <div className="flex items-center gap-2">
-                <span className="text-xs font-semibold uppercase tracking-wider text-slate-500">
+                <span className="text-xs font-normal text-slate-500">
                   {t("mcp.activeTokens")}
                 </span>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-medium text-slate-600">
+                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs font-normal text-slate-600">
                   {tokens.length}
                 </span>
               </div>

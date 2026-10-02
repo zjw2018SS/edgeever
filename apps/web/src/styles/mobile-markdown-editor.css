@@ -309,6 +309,7 @@ input {
 
 .mobile-editor-tool-button:disabled {
   border-color: transparent;
+  opacity: 0.38;
 }
 
 .mobile-editor-tool-button:disabled:active {
@@ -481,6 +482,9 @@ input {
   user-select: text;
   caret-color: auto;
   white-space: pre-wrap;
+  word-break: break-word;
+  overflow-wrap: break-word;
+  font-feature-settings: "chws" 1;
 }
 
 /* Keep semantic emphasis visible even though the standalone shell disables
@@ -584,7 +588,7 @@ html.dark .edgeever-mobile-tiptap-content a:hover {
   height: 18px;
   margin: 0;
   border-radius: 3px;
-  accent-color: #16a06e;
+  accent-color: #1a1d21;
 }
 
 .edgeever-mobile-tiptap-content ul[data-type="taskList"] li[data-checked] > div {
@@ -607,38 +611,58 @@ html.dark .edgeever-mobile-tiptap-content a:hover {
   padding-left: 24px;
 }
 
+.edgeever-mobile-tiptap-content .ee-inline-field-source {
+  font-size: 0;
+  color: transparent;
+}
+
+.edgeever-mobile-tiptap-content .ee-inline-field {
+  display: inline-flex;
+  align-items: center;
+  margin: 0 0.15rem;
+  padding: 0 0.45rem;
+  border: 1px solid #e2e8f0;
+  border-radius: 999px;
+  background: #f1f5f9;
+  color: #64748b;
+  font-size: 0.75rem;
+  font-weight: 600;
+  line-height: 1.55;
+  vertical-align: 0.12em;
+}
+
 .edgeever-mobile-tiptap-content blockquote {
-  border-left: 3px solid #16a06e;
-  border-radius: 1px 4px 4px 1px;
-  padding: 0.35rem 0.5rem 0.35rem 0.85rem;
-  color: #334155;
-  background: color-mix(in srgb, #16a06e 4%, transparent);
+  border: 0;
+  border-radius: 8px;
+  padding: 0.75rem 1rem;
+  color: #3d4450;
+  background: #f3f5f7;
   margin: 0 0 0.85em;
 }
 
 .edgeever-mobile-tiptap-content hr {
   border: 0;
-  border-top: 1px solid #e2e8f0;
+  border-top: 1px solid var(--memo-content-divider-color, #1a1d21);
   margin: 1.2rem 0;
 }
 
 .edgeever-mobile-tiptap-content hr.edgeever-merge-divider,
 .edgeever-mobile-tiptap-content hr[data-edgeever-merge-divider] {
   border: 0;
-  border-top: 2px solid var(--memo-content-divider-color, #66ca80);
+  border-top: 2px solid var(--memo-content-divider-color, #1a1d21);
   background: transparent;
   height: 0;
   margin: 1.5rem 0;
 }
 
 .edgeever-mobile-tiptap-content code {
-  border: 1px solid #d4ebdc;
+  border: 1px solid #e1e5ea;
   border-radius: 4px;
-  background: #f2f9f5;
+  background: #f3f5f7;
   padding: 0.12rem 0.38rem;
   font-size: 0.875em;
   font-weight: 550;
-  color: #0d5f3a;
+  color: #3d4450;
   font-family: "JetBrains Mono", "Fira Code", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
@@ -678,7 +702,7 @@ html.dark .edgeever-mobile-tiptap-content a:hover {
   display: flex;
   gap: 0.25rem;
   padding: 0.25rem;
-  border: 1px solid #d9e2dc;
+  border: 1px solid #e3ece7;
   border-radius: 7px;
   background: rgb(255 255 255 / 0.94);
   box-shadow: 0 1px 3px rgb(15 23 42 / 0.08);
@@ -724,32 +748,43 @@ html.dark .edgeever-mobile-tiptap-content a:hover {
   display: flex;
   max-height: min(70vh, 36rem);
   min-height: 6rem;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
   overflow: auto;
   overscroll-behavior-x: contain;
   overscroll-behavior-y: auto;
-  padding: 4rem 0.75rem 0.75rem;
-  border: 1px solid #d9e2dc;
+  padding: 1rem 0.75rem 0.75rem;
+  border: 1px solid #e3ece7;
   border-radius: 8px;
-  background: #fbfdfb;
+  background: var(--workspace-editor, #f8fafb);
   scrollbar-color: rgb(100 116 139 / 0.35) transparent;
 }
 
 .edgeever-mobile-tiptap-content .edgeever-mermaid-svg {
   display: flex;
-  width: 100%;
-  min-width: 0;
+  width: max-content;
+  min-width: 100%;
+  flex: none;
   align-self: flex-start;
   justify-content: center;
 }
 
 .edgeever-mobile-tiptap-content .edgeever-mermaid-svg svg {
   display: block;
-  width: auto;
-  max-width: 100%;
-  height: auto;
-  max-height: 440px;
+  width: var(--mermaid-display-width, auto);
+  max-width: none;
+  height: var(--mermaid-display-height, auto);
+  max-height: none;
+  flex: none;
+}
+
+.edgeever-mobile-tiptap-content .edgeever-mermaid-svg text {
+  font-family: var(--editor-body-font-family, var(--edgeever-system-font-family, -apple-system, "PingFang SC", "Noto Sans SC", sans-serif));
+  font-synthesis: weight;
+}
+
+.edgeever-mobile-tiptap-content .edgeever-mermaid-svg text[font-weight="500"] {
+  font-weight: 550;
 }
 
 .edgeever-mobile-tiptap-content .edgeever-mermaid-source {
@@ -890,6 +925,8 @@ html.dark .edgeever-mobile-tiptap-content a:hover {
 .edgeever-mobile-tiptap-content th p,
 .edgeever-mobile-tiptap-content td p {
   margin: 0;
+  letter-spacing: inherit;
+  line-height: inherit;
 }
 
 .edgeever-mobile-tiptap-content .selectedCell::after {
@@ -901,8 +938,8 @@ html.dark .edgeever-mobile-tiptap-content a:hover {
 }
 
 :root.dark .edgeever-mobile-tiptap-content blockquote {
-  color: #cbd5e1;
-  background: color-mix(in srgb, #16a06e 7%, transparent);
+  color: #e7e5e4;
+  background: rgb(255 255 255 / 0.05);
 }
 
 :root.dark .edgeever-mobile-tiptap-content th {
@@ -911,9 +948,9 @@ html.dark .edgeever-mobile-tiptap-content a:hover {
 }
 
 :root.dark .edgeever-mobile-tiptap-content code {
-  border-color: rgba(22, 160, 110, 0.28);
-  background: rgba(22, 160, 110, 0.12);
-  color: #6ee7b7;
+  border-color: rgb(255 255 255 / 0.12);
+  background: rgb(255 255 255 / 0.06);
+  color: #e7e5e4;
 }
 
 :root.dark .edgeever-mobile-tiptap-content .edgeever-code-source {

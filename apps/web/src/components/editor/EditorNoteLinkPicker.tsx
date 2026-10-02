@@ -32,7 +32,7 @@ export const EditorNoteLinkPicker = ({
 
   return (
     <div
-      className="absolute left-3 right-3 top-14 z-30 h-[min(22rem,calc(100%-4rem))] max-w-xl rounded-lg border border-slate-200 bg-white shadow-xl sm:left-5 sm:right-auto sm:w-[28rem]"
+      className="absolute left-3 right-3 top-14 z-30 h-[min(22rem,calc(100%-4rem))] max-w-xl rounded-lg border border-slate-200 bg-card shadow-xl sm:left-5 sm:right-auto sm:w-[28rem]"
       role="dialog"
       aria-label={t("noteLinkPicker.title")}
     >
@@ -65,7 +65,7 @@ export const EditorNoteLinkPicker = ({
               <CommandGroup>
                 {candidates.map((candidate) => (
                   <CommandItem key={candidate.id} value={candidate.id} onSelect={() => onInsert(candidate)}>
-                    <Link2 className="h-4 w-4 shrink-0 text-emerald-600" />
+                    <Link2 className="h-4 w-4 shrink-0 text-slate-600" />
                     <span className="min-w-0 flex-1 truncate">{candidate.title || t("common.untitledMemo")}</span>
                     <span className="max-w-40 truncate text-xs text-slate-400">{candidate.excerpt}</span>
                   </CommandItem>

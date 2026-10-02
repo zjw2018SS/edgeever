@@ -1,5 +1,5 @@
 import { memo, useCallback, useEffect, useMemo, useRef, useState, type ReactNode } from "react";
-import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryKey } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient, type InfiniteData, type QueryKey } from "@tanstack/react-query";
 import * as Clipboard from "expo-clipboard";
 import type { ListMemosResponse, MemoFilterMode, MemoSortMode } from "@edgeever/client";
 import {
@@ -19,18 +19,20 @@ import {
 import { SafeAreaView, useSafeAreaInsets } from "react-native-safe-area-context";
 import { Alert, Pressable, Text } from "../components/LocalizedText";
 import { ApiRequestError } from "@edgeever/client";
-import { DEFAULT_MEMO_TITLE, getNotebookDescendantIds, hasDiagramDocumentMarker, markdownToDoc, type MemoDetail } from "@edgeever/shared";
+import { DEFAULT_MEMO_TITLE, getNotebookScopeIds, hasDiagramDocumentMarker, markdownToDoc, type MemoDetail } from "@edgeever/shared";
 import { MOBILE_UI_METRICS, toggleMobileMemoFilterMode } from "@edgeever/shared/mobile-ui";
 import { clearMobileMemoDraft, readMobileMemoDraft, type MobileMemoDraft } from "../lib/mobile-drafts";
 import {
   readMobileImageCompressionEnabled,
+  readMobileShowDescendantNotes,
   readMobileMemoListDensity,
   writeMobileImageCompressionEnabled,
+  saveMobileShowDescendantNotes,
   writeMobileMemoListDensity,
   type MobileLocalePreference,
   type MobileMemoListDensity,
 } from "../lib/preferences";
-import { useMobileLocale } from "../lib/mobile-locale";
+import { localizeUntitledMemoTitle, localizeMissingNotebookName, useMobileLocale } from "../lib/mobile-locale";
 import { useSession } from "../lib/session";
 import {
   clearMobileMemoUpdateQueueItem,
@@ -93,6 +95,7 @@ import {
   applyOptimisticMemoToCache,
   createOptimisticMemo,
   findCachedMemoDetail,
+  memoQueriesShareScope,
   type MobileMemoUpdatePayload,
 } from "./workspace-memo-cache";
 import { refreshWorkspaceThemeStyles, styles } from "./workspace-styles";
@@ -102,9 +105,10 @@ import { MemoDetailModal } from "./WorkspaceMemoDetail";
 import {
   MoveSelectionModal,
   NotebookPickerModal,
+  TagPickerModal,
 } from "./WorkspacePickers";
 import { RevisionHistoryModal } from "./WorkspaceRevisionHistory";
-import { CreateMemoModal, RichEditorModal } from "./WorkspaceEditors";
+import { CreateMemoModal } from "./WorkspaceEditors";
 import {
   NotesActionsModal,
   SelectionActionBar,
@@ -139,7 +143,7 @@ export const WorkspaceScreen = ({
   onIncomingShareHandled?: () => void;
 }) => {
   const { resolvedTheme } = useMobileTheme();
-  const { preference: localePreference, resolvedLocale, setPreference: setLocalePreference } = useMobileLocale();
+  const { preference: localePreference, resolvedLocale, setPreference: setLocalePreference, translate } = useMobileLocale();
   const hasUpdate = useMobileUpdateAvailable();
   refreshWorkspaceThemeStyles(resolvedTheme);
   const { client, session, signOut } = useSession();
@@ -152,9 +156,13 @@ export const WorkspaceScreen = ({
   const autoSelectedDemoNotebookRef = useRef(false);
   const [memoView, setMemoView] = useState<MemoView>("notebook");
   const [memoFilterMode, setMemoFilterMode] = useState<MemoFilterMode>("all");
+  const [selectedTag, setSelectedTag] = useState<string | null>(null);
   const [memoSortMode, setMemoSortMode] = useState<MemoSortMode>("updated-desc");
   const [memoListDensity, setMemoListDensity] = useState<MobileMemoListDensity>("preview");
   const [imageCompressionEnabled, setImageCompressionEnabled] = useState(true);
+  // Null until the stored value loads, so lists never flash the wrong notebook scope.
+  const [showDescendantNotes, setShowDescendantNotes] = useState<boolean | null>(null);
+  const [showDescendantNotesSaveFailed, setShowDescendantNotesSaveFailed] = useState(false);
   const [selectedMemoId, setSelectedMemoId] = useState<string | null>(null);
   const [searchText, setSearchText] = useState("");
   const [createOpen, setCreateOpen] = useState(false);
@@ -167,6 +175,7 @@ export const WorkspaceScreen = ({
   const [isImportingShare, setIsImportingShare] = useState(false);
   const [notesActionsOpen, setNotesActionsOpen] = useState(false);
   const [notebookPickerOpen, setNotebookPickerOpen] = useState(false);
+  const [tagFilterPickerOpen, setTagFilterPickerOpen] = useState(false);
   const [richEditingSession, setRichEditingSession] = useState<RichEditingSession | null>(null);
   const [revisionMemo, setRevisionMemo] = useState<MemoDetail | null>(null);
   const {
@@ -185,6 +194,7 @@ export const WorkspaceScreen = ({
     toggleVisibleSelection,
   } = useMobileWorkspaceSelection();
   const memoDraftPrefetchRef = useRef(new Map<string, Promise<MobileMemoDraft | null>>());
+  const memoDraftValueRef = useRef(new Map<string, MobileMemoDraft | null>());
   const processedShareUrlRef = useRef<string | null>(null);
   const onIncomingShareHandledRef = useRef(onIncomingShareHandled);
   onIncomingShareHandledRef.current = onIncomingShareHandled;
@@ -234,7 +244,7 @@ export const WorkspaceScreen = ({
       return;
     }
 
-    if (!autoSelectedDemoNotebookRef.current && activeNotebookId === ALL_NOTES_ID) {
+    if (!autoSelectedDemoNotebookRef.current && activeNotebookId === ALL_NOTES_ID && !selectedTag) {
       autoSelectedDemoNotebookRef.current = true;
       setActiveNotebookId(preferredNotebookId);
       return;
@@ -243,16 +253,17 @@ export const WorkspaceScreen = ({
     if (activeNotebookId === alternateNotebookId) {
       setActiveNotebookId(preferredNotebookId);
     }
-  }, [activeNotebookId, localePreference, notebooks]);
+  }, [activeNotebookId, localePreference, notebooks, selectedTag]);
 
   const activeNotebook = notebooks.find((notebook) => notebook.id === activeNotebookId) ?? null;
-  const activeNotebookDescendantIds = useMemo(
-    () => (activeNotebookId === ALL_NOTES_ID ? [] : getNotebookDescendantIds(notebooks, activeNotebookId)),
-    [activeNotebookId, notebooks]
+  const activeNotebookScopeIds = useMemo(
+    () => (activeNotebookId === ALL_NOTES_ID || selectedTag ? [] : getNotebookScopeIds(notebooks, activeNotebookId, showDescendantNotes ?? true)),
+    [activeNotebookId, notebooks, selectedTag, showDescendantNotes]
   );
 
+  const memosQueryKey = ["mobile", "memos", memoView, activeNotebookId, memoFilterMode, memoSortMode, activeNotebookScopeIds, selectedTag, "paged-v3"] as const;
   const memosQuery = useInfiniteQuery({
-    queryKey: ["mobile", "memos", memoView, activeNotebookId, memoFilterMode, memoSortMode, activeNotebookDescendantIds, "paged-v2"],
+    queryKey: memosQueryKey,
     initialPageParam: 0,
     queryFn: async ({ pageParam }) => {
       if (!client) {
@@ -260,8 +271,9 @@ export const WorkspaceScreen = ({
       }
 
       return listLocalMemos(dataScope, {
-        notebookIds: activeNotebookDescendantIds,
+        notebookIds: activeNotebookScopeIds,
         filter: memoFilterMode,
+        tag: memoView === "notebook" ? selectedTag ?? undefined : undefined,
         limit: 50,
         offset: pageParam,
         sort: memoSortMode,
@@ -269,12 +281,14 @@ export const WorkspaceScreen = ({
       });
     },
     getNextPageParam: (lastPage) => lastPage.nextCursor ? Number(lastPage.nextCursor) : undefined,
-    enabled: Boolean(client),
-    placeholderData: keepPreviousData,
+    enabled: Boolean(client) && showDescendantNotes !== null,
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery && memoQueriesShareScope("memos", previousQuery.queryKey, memosQueryKey) ? previousData : undefined,
   });
 
+  const searchQueryKey = ["mobile", "search", memoView, debouncedSearchText, activeNotebookId, memoFilterMode, memoSortMode, activeNotebookScopeIds, selectedTag, "paged-v5"] as const;
   const searchQuery = useInfiniteQuery({
-    queryKey: ["mobile", "search", memoView, debouncedSearchText, activeNotebookId, memoFilterMode, memoSortMode, activeNotebookDescendantIds, "paged-v4"],
+    queryKey: searchQueryKey,
     initialPageParam: 0,
     queryFn: async ({ pageParam }) => {
       if (!client) {
@@ -283,8 +297,9 @@ export const WorkspaceScreen = ({
 
       return listLocalMemos(dataScope, {
         q: debouncedSearchText,
-        notebookIds: activeNotebookDescendantIds,
+        notebookIds: activeNotebookScopeIds,
         filter: memoFilterMode,
+        tag: memoView === "notebook" ? selectedTag ?? undefined : undefined,
         limit: 50,
         offset: pageParam,
         sort: memoSortMode,
@@ -292,8 +307,9 @@ export const WorkspaceScreen = ({
       });
     },
     getNextPageParam: (lastPage) => lastPage.nextCursor ? Number(lastPage.nextCursor) : undefined,
-    enabled: Boolean(client && debouncedSearchText.length > 0),
-    placeholderData: keepPreviousData,
+    enabled: Boolean(client && debouncedSearchText.length > 0) && showDescendantNotes !== null,
+    placeholderData: (previousData, previousQuery) =>
+      previousQuery && memoQueriesShareScope("search", previousQuery.queryKey, searchQueryKey) ? previousData : undefined,
   });
 
   const memoDetailQuery = useQuery({
@@ -342,6 +358,11 @@ export const WorkspaceScreen = ({
         }
         return true;
       }
+      if (selectedTag) {
+        setSelectedTag(null);
+        setMemoFilterMode("all");
+        return true;
+      }
       if (memoView === "trash") {
         setMemoView("notebook");
         return true;
@@ -349,7 +370,7 @@ export const WorkspaceScreen = ({
       return false;
     });
     return () => subscription.remove();
-  }, [activeView, clearSelection, memoView, searchText, selectedMemoId, selectionMode]);
+  }, [activeView, clearSelection, memoView, searchText, selectedMemoId, selectedTag, selectionMode]);
 
   useEffect(() => {
     if (notebooksQuery.data && memosQuery.data) {
@@ -386,13 +407,28 @@ export const WorkspaceScreen = ({
     setActiveView("notes");
     setMemoView("notebook");
     setActiveNotebookId(ALL_NOTES_ID);
+    setSelectedTag(null);
     setSearchText("");
     clearSelection();
+  };
+
+  const clearTagFilter = () => {
+    setSelectedTag(null);
+    setMemoFilterMode("all");
+    clearSelection();
+  };
+
+  const handleMemoFilterModeChange = (nextFilterMode: MemoFilterMode) => {
+    if (nextFilterMode !== "all") {
+      setSelectedTag(null);
+    }
+    setMemoFilterMode(nextFilterMode);
   };
 
   const showTrash = () => {
     setMemoView("trash");
     setActiveNotebookId(ALL_NOTES_ID);
+    setSelectedTag(null);
     setSearchText("");
     clearSelection();
   };
@@ -429,43 +465,37 @@ export const WorkspaceScreen = ({
     if (cached) {
       return cached;
     }
-    const pending = readMobileMemoDraft(memoId);
+    const pending = readMobileMemoDraft(memoId).then((draft) => {
+      memoDraftValueRef.current.set(memoId, draft);
+      return draft;
+    });
     memoDraftPrefetchRef.current.set(memoId, pending);
     return pending;
   }, []);
 
-  const openRichEditor = useCallback(async (memo: MemoDetail, initialFocus: "body" | "title" = "body") => {
+  const openRichEditor = useCallback((memo: MemoDetail, initialFocus: "body" | "title" = "body") => {
     if (hasDiagramDocumentMarker(memo.contentMarkdown)) {
       Alert.alert(
-        resolvedLocale === "en-US" ? "View-only diagram" : "图表暂为只读",
+        resolvedLocale !== "zh-CN" ? "View-only diagram" : "图表暂为只读",
         resolvedLocale === "en-US"
           ? "Visual diagram editing is currently available on Web and desktop."
           : "可视化图表目前请在 Web 或桌面端编辑。"
       );
       return;
     }
-    // Unmount detail DomWebView before the editable instance mounts (Android IME).
+    // Keep the detail DomWebView mounted and switch it in place. Remounting the
+    // editor costs ~1s, and waiting on a network refresh made tap-to-edit feel like 2-3s.
     beginEditorStartup();
-    let editingMemo = memo;
-    const queuedItem = (await listMobileSyncQueueItems(syncQueueScope)).find((item) => item.memoId === memo.id);
-
-    if (!queuedItem && client && !memo.id.startsWith("local:")) {
-      try {
-        const response = await client.getMemo(memo.id);
-        editingMemo = response.memo;
-        await upsertLocalMemo(dataScope, editingMemo);
-        queryClient.setQueryData(["mobile", "memo", "notebook", editingMemo.id], { memo: editingMemo });
-        queryClient.setQueryData(["mobile", "memo", "trash", editingMemo.id], { memo: editingMemo });
-      } catch {
-        // The local mirror remains editable while offline.
-      }
+    const open = (draft: MobileMemoDraft | null) => {
+      memoDraftPrefetchRef.current.delete(memo.id);
+      setRichEditingSession({ draft, initialFocus, memo });
+    };
+    if (memoDraftValueRef.current.has(memo.id)) {
+      open(memoDraftValueRef.current.get(memo.id) ?? null);
+      return;
     }
-
-    const draft = await loadMemoDraft(editingMemo.id);
-    memoDraftPrefetchRef.current.delete(memo.id);
-    setSelectedMemoId(null);
-    setRichEditingSession({ draft, initialFocus, memo: editingMemo });
-  }, [client, dataScope, loadMemoDraft, queryClient, resolvedLocale, syncQueueScope]);
+    void loadMemoDraft(memo.id).then(open);
+  }, [loadMemoDraft, resolvedLocale]);
 
   const memos = useMemo(() => memosQuery.data?.pages.flatMap((page) => page.memos) ?? [], [memosQuery.data]);
   const searchResults = useMemo(() => searchQuery.data?.pages.flatMap((page) => page.memos) ?? [], [searchQuery.data]);
@@ -530,35 +560,44 @@ export const WorkspaceScreen = ({
   const handleRenderedClipCaptured = useCallback((page: MobileRenderedWebPage) => {
     if (!incomingClipCaptureUrl) return;
     openIncomingClipDraft(
-      buildMobileWebClipDraftFromRenderedPage(incomingClipCaptureUrl, page),
+      buildMobileWebClipDraftFromRenderedPage(incomingClipCaptureUrl, page, { locale: resolvedLocale }),
     );
     finishIncomingShare();
-  }, [finishIncomingShare, incomingClipCaptureUrl, openIncomingClipDraft]);
+  }, [finishIncomingShare, incomingClipCaptureUrl, openIncomingClipDraft, resolvedLocale]);
 
   const handleRenderedClipFailed = useCallback((message: string) => {
     const sourceUrl = incomingClipCaptureUrl;
     if (!sourceUrl) return;
     setIncomingClipCaptureUrl(null);
-    void buildMobileWebClipDraft(sourceUrl)
+    void buildMobileWebClipDraft(sourceUrl, { locale: resolvedLocale })
       .then((draft) => {
         openIncomingClipDraft(draft);
         Alert.alert(
           "正文剪藏失败",
-          `${message} 已保留文章链接，你可以稍后重新分享重试。`,
+          `${translate(message)} ${translate("已保留文章链接，你可以稍后重新分享重试。")}`,
         );
       })
       .finally(finishIncomingShare);
-  }, [finishIncomingShare, incomingClipCaptureUrl, openIncomingClipDraft]);
+  }, [finishIncomingShare, incomingClipCaptureUrl, openIncomingClipDraft, resolvedLocale, translate]);
 
   useEffect(() => {
     if (incomingShareIsResolving) {
       return;
     }
 
+    if (incomingShareError && incomingSharePayloads.length === 0) {
+      if (processedShareUrlRef.current !== "invalid-share-resolution") {
+        processedShareUrlRef.current = "invalid-share-resolution";
+        Alert.alert(translate("无法读取分享内容"), translate("请重新分享后再试。"));
+        onIncomingShareHandledRef.current?.();
+      }
+      return;
+    }
+
     if (incomingShareError && sharedImages.some((image) => !image.uri.startsWith("file:"))) {
       if (processedShareUrlRef.current !== "invalid-binary-share") {
         processedShareUrlRef.current = "invalid-binary-share";
-        Alert.alert("无法读取分享图片", incomingShareError.message || "请重新分享后再试。");
+        Alert.alert(translate("无法读取分享图片"), translate("请重新分享后再试。"));
         onIncomingShareHandledRef.current?.();
       }
       return;
@@ -586,7 +625,7 @@ export const WorkspaceScreen = ({
       setCreateSeed({
         contentMarkdown: "",
         tagsText: "",
-        title: sharedImages.length === 1 ? "分享的图片" : `分享的图片（${sharedImages.length} 张）`,
+        title: translate(sharedImages.length === 1 ? "分享的图片" : `分享的图片（${sharedImages.length} 张）`),
       });
       setActiveView("notes");
       setMemoView("notebook");
@@ -630,7 +669,7 @@ export const WorkspaceScreen = ({
         active = false;
       };
     }
-    void buildMobileWebClipDraft(sourceUrl)
+    void buildMobileWebClipDraft(sourceUrl, { locale: resolvedLocale })
       .then((draft) => {
         if (!active) {
           return;
@@ -660,7 +699,9 @@ export const WorkspaceScreen = ({
     notebooks.length,
     notebooksQuery.isSuccess,
     openIncomingClipDraft,
+    resolvedLocale,
     sharedImages,
+    translate,
   ]);
 
   useEffect(() => {
@@ -671,7 +712,7 @@ export const WorkspaceScreen = ({
 
   useEffect(() => {
     clearSelection();
-  }, [activeNotebookId, clearSelection, memoFilterMode, memoSortMode, memoView]);
+  }, [activeNotebookId, clearSelection, memoFilterMode, memoSortMode, memoView, selectedTag]);
 
   useEffect(() => {
     let mounted = true;
@@ -701,6 +742,11 @@ export const WorkspaceScreen = ({
     readMobileImageCompressionEnabled().then((enabled) => {
       if (mounted) {
         setImageCompressionEnabled(enabled);
+      }
+    });
+    readMobileShowDescendantNotes().then((enabled) => {
+      if (mounted) {
+        setShowDescendantNotes(enabled);
       }
     });
 
@@ -735,6 +781,12 @@ export const WorkspaceScreen = ({
   const handleImageCompressionChange = (enabled: boolean) => {
     setImageCompressionEnabled(enabled);
     void writeMobileImageCompressionEnabled(enabled);
+  };
+
+  const handleShowDescendantNotesChange = async (enabled: boolean) => {
+    const result = await saveMobileShowDescendantNotes(enabled);
+    setShowDescendantNotes(result.value);
+    setShowDescendantNotesSaveFailed(!result.saved);
   };
 
   const optimisticallyRemoveMemoIds = async (memoIds: string[]): Promise<MobileMemoListCacheSnapshot> => {
@@ -949,9 +1001,10 @@ export const WorkspaceScreen = ({
 
       const response = await client.createMemoShare(memo.id);
       const shareUrl = `${session.baseUrl.replace(/\/+$/, "")}/share/${encodeURIComponent(response.share.token)}`;
+      const shareTitle = localizeUntitledMemoTitle(memo.title, resolvedLocale);
       await NativeShare.share({
-        message: `${memo.title?.trim() || DEFAULT_MEMO_TITLE}\n${shareUrl}`,
-        title: memo.title?.trim() || DEFAULT_MEMO_TITLE,
+        message: `${shareTitle}\n${shareUrl}`,
+        title: shareTitle,
         url: shareUrl,
       });
     },
@@ -1049,7 +1102,7 @@ export const WorkspaceScreen = ({
       memo.contentJson,
       target,
       resource.filename || filename,
-      resolvedLocale === "en-US" ? "Attachment: " : "附件："
+      resolvedLocale !== "zh-CN" ? "Attachment: " : "附件："
     );
     await localUpdateMemoMutation.mutateAsync({
       memo,
@@ -1146,21 +1199,9 @@ export const WorkspaceScreen = ({
     ]);
   };
 
-  if (richEditingSession) {
-    return <RichEditorModal
-      baseUrl={session?.baseUrl ?? ""}
-      initialDraft={richEditingSession.draft}
-      initialFocus={richEditingSession.initialFocus}
-      imageCompressionEnabled={imageCompressionEnabled}
-      memo={richEditingSession.memo}
-      notebooks={notebooks}
-      onClose={closeRichEditor}
-      updateMutation={localUpdateMemoMutation}
-    />;
-  }
-
-  // Full-tree create (same as rich edit) — never stack DomWebView inside RN Modal over
+  // Full-tree create — never stack a second DomWebView inside an RN Modal over
   // list/detail WebViews; that breaks Android soft-input attachment.
+  // Existing-note edits stay on the detail viewer and switch it in place.
   if (createOpen) {
     return (
       <CreateMemoModal
@@ -1199,6 +1240,7 @@ export const WorkspaceScreen = ({
       {activeView === "notes" ? (
         <NotesView
           activeNotebook={activeNotebook}
+          showDescendantNotes={showDescendantNotes ?? true}
           initialSyncProgress={initialMirrorSyncProgress}
           isLoading={notebooksQuery.isLoading || (searchActive ? searchQuery.isLoading : memosQuery.isLoading) || (isInitialMirrorStatusPending && visibleMemos.length === 0)}
           isLoadingMore={searchActive ? searchQuery.isFetchingNextPage : memosQuery.isFetchingNextPage}
@@ -1211,9 +1253,11 @@ export const WorkspaceScreen = ({
           notebooks={notebooks}
           onCreate={() => openCreateMemo()}
           onCreateFromTemplate={canCreateMemo ? openCreateFromTemplate : undefined}
+          onClearTag={clearTagFilter}
           onClearSelection={clearSelection}
-          onFilterModeChange={setMemoFilterMode}
+          onFilterModeChange={handleMemoFilterModeChange}
           onOpenActions={() => setNotesActionsOpen(true)}
+          onOpenTagFilter={() => setTagFilterPickerOpen(true)}
           onOpenNotebookPicker={() => setNotebookPickerOpen(true)}
           onMemoPress={handleMemoPress}
           onMemoLongPress={(memo) => {
@@ -1233,6 +1277,7 @@ export const WorkspaceScreen = ({
           }}
           onSetMemoView={(nextMemoView) => nextMemoView === "trash" ? showTrash() : showAllNotes()}
           searchText={searchText}
+          selectedTag={selectedTag}
           totalMemoCount={searchActive
             ? searchQuery.data?.pages[0]?.totalCount ?? searchResults.length
             : memosQuery.data?.pages[0]?.totalCount ?? memos.length}
@@ -1252,11 +1297,16 @@ export const WorkspaceScreen = ({
           onLocalePreferenceChange={handleLocalePreferenceChange}
           imageCompressionEnabled={imageCompressionEnabled}
           onImageCompressionChange={handleImageCompressionChange}
+          showDescendantNotes={showDescendantNotes ?? true}
+          showDescendantNotesSaveFailed={showDescendantNotesSaveFailed}
+          onShowDescendantNotesChange={(enabled) => void handleShowDescendantNotesChange(enabled)}
           onSignOut={signOut}
         />
       ) : null}
 
       <MemoDetailModal
+        editingSession={richEditingSession}
+        imageCompressionEnabled={imageCompressionEnabled}
         initialSearchQuery={selectedMemoId ? searchText.trim() : ""}
         isDeleting={deleteMemoMutation.isPending}
         isLoading={memoDetailQuery.isLoading}
@@ -1264,11 +1314,13 @@ export const WorkspaceScreen = ({
         isSaving={updateMemoMutation.isPending || localUpdateMemoMutation.isPending}
         isSharing={shareMemoMutation.isPending}
         memo={selectedMemo}
-        notebookName={notebooks.find((notebook) => notebook.id === selectedMemo?.notebookId)?.name ?? "未分类"}
+        notebookName={notebooks.find((notebook) => notebook.id === selectedMemo?.notebookId)?.name ?? localizeMissingNotebookName(resolvedLocale)}
+        notebooks={notebooks}
         onClose={closeDetail}
+        onCloseEditor={closeRichEditor}
         onDelete={handleDeleteMemo}
         onDeleteResource={handleDeleteResource}
-        onRichEdit={(memo, initialFocus) => void openRichEditor(memo, initialFocus)}
+        onRichEdit={openRichEditor}
         onOpenRevisions={setRevisionMemo}
         onRenameResource={handleRenameResource}
         onAdoptCloudVersion={(memo) => void handleAdoptCloudVersion(memo)}
@@ -1282,6 +1334,7 @@ export const WorkspaceScreen = ({
         onShare={(memo) => shareMemoMutation.mutate(memo)}
         syncError={selectedMemoSyncError}
         syncStatus={selectedMemoSyncStatus}
+        updateMutation={localUpdateMemoMutation}
         visible={Boolean(selectedMemoId)}
       />
 
@@ -1290,9 +1343,30 @@ export const WorkspaceScreen = ({
         notebooks={notebooks}
         onClose={() => setNotebookPickerOpen(false)}
         onSelect={(notebookId) => {
+          setSelectedTag(null);
           setActiveNotebookId(notebookId);
           setNotebookPickerOpen(false);
         }}
+        visible
+      /> : null}
+
+      {tagFilterPickerOpen ? <TagPickerModal
+        allowCreate={false}
+        dataScope={dataScope}
+        description="选择一个标签，只查看带有该标签的笔记"
+        maxSelections={1}
+        onChange={(tags) => {
+          setSelectedTag(tags[0] ?? null);
+          setMemoFilterMode("all");
+          setMemoView("notebook");
+          setActiveNotebookId(ALL_NOTES_ID);
+          setSearchText("");
+          clearSelection();
+          setTagFilterPickerOpen(false);
+        }}
+        onClose={() => setTagFilterPickerOpen(false)}
+        selectedTags={selectedTag ? [selectedTag] : []}
+        title="按标签筛选"
         visible
       /> : null}
 
@@ -1366,13 +1440,17 @@ export const WorkspaceScreen = ({
         memoListDensity={memoListDensity}
         memoSortMode={memoSortMode}
         listDescription={`${searchActive ? searchQuery.data?.pages[0]?.totalCount ?? searchResults.length : memosQuery.data?.pages[0]?.totalCount ?? memos.length} 条笔记`}
-        listTitle={memoView === "trash" ? "回收站" : activeNotebook?.name ?? "全部笔记"}
+        listTitle={memoView === "trash" ? "回收站" : selectedTag ? `#${selectedTag}` : activeNotebook?.name ?? "全部笔记"}
         onClose={() => setNotesActionsOpen(false)}
         onEnterSelection={() => {
           setNotesActionsOpen(false);
           enterSelectionMode();
         }}
         onMemoListDensityChange={handleMemoListDensityChange}
+        onOpenTagFilter={() => {
+          setNotesActionsOpen(false);
+          setTagFilterPickerOpen(true);
+        }}
         onSortModeChange={setMemoSortMode}
         selectionMode={selectionMode}
         visible
@@ -1411,13 +1489,13 @@ export const WorkspaceScreen = ({
         />
       ) : null}
 
-      {activeView !== "settings" && !selectionMode ? (
+      {!selectionMode ? (
         <View
           style={[styles.bottomNav, { height: MOBILE_UI_METRICS.bottomNavigationHeight + safeAreaInsets.bottom, paddingBottom: safeAreaInsets.bottom }]}
         >
         <BottomNavItem
           active={activeView === "notes"}
-          icon={<Home color={activeView === "notes" ? "#0f172a" : "#64748b"} size={20} />}
+          icon={<Home color={activeView === "notes" ? styles.bottomNavIconActive.color : styles.bottomNavText.color} size={20} />}
           label="首页"
           onPress={showAllNotes}
         />
@@ -1438,9 +1516,9 @@ export const WorkspaceScreen = ({
           <Plus color={canCreateMemo ? "#ffffff" : "#e2e8f0"} size={28} />
         </Pressable>
         <BottomNavItem
-          active={false}
+          active={activeView === "settings"}
           badge={hasUpdate}
-          icon={<UserRound color="#64748b" size={20} />}
+          icon={<UserRound color={activeView === "settings" ? styles.bottomNavIconActive.color : styles.bottomNavText.color} size={20} />}
           label="我的"
           onPress={openSettings}
         />
@@ -1458,6 +1536,7 @@ const BottomNavItem = ({ active = false, badge = false, icon, label, onPress }: 
     onPress={onPress}
     style={styles.bottomNavItem}
   >
+    {active ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.bottomNavActiveIndicator} /> : null}
     <View style={styles.bottomNavIcon}>
       {icon}
       {badge ? <View accessibilityElementsHidden importantForAccessibility="no-hide-descendants" style={styles.bottomNavBadge} /> : null}

@@ -3,6 +3,12 @@ import type { TiptapDoc } from "./content";
 
 export const DESKTOP_SIDECAR_PROTOCOL_VERSION = 2;
 
+/** Sidecar-authored memo revision ids. Remote cached revisions use server ids. */
+export const DESKTOP_LOCAL_REVISION_ID_PREFIX = "revision_local_";
+
+export const isDesktopLocalRevisionId = (id: string) =>
+  id.startsWith(DESKTOP_LOCAL_REVISION_ID_PREFIX);
+
 export const DESKTOP_RPC_METHODS = [
   "system.info",
   "storage.health",
@@ -57,6 +63,7 @@ export type DesktopMemoListParams = {
   notebookId?: string | null;
   notebookIds?: string[];
   q?: string;
+  tag?: string;
   trash?: boolean;
   sort?: "updated-desc" | "created-desc" | "title-asc";
   filter?: "all" | "pinned" | "tagged" | "untagged";
@@ -157,7 +164,7 @@ export type DesktopRpcParams = {
   "memo.get": { memoId: string; includeDeleted?: boolean };
   "memo.create": DesktopMemoCreateParams;
   "memo.update": DesktopMemoUpdateParams;
-  "memo.delete": { memoId: string; permanent?: boolean };
+  "memo.delete": { memoId: string; permanent?: boolean; cancelPendingCreate?: boolean };
   "memo.restore": { memoId: string };
   "memo.revisions": { memoId: string; limit?: number };
   "memo.restoreRevision": { memoId: string; revisionId: string };

@@ -8,6 +8,15 @@ const systemInfoSource = readFileSync(new URL("../../../web/src/components/setti
 const notebookPaneSource = readFileSync(new URL("../../../web/src/components/NotebookPane.tsx", import.meta.url), "utf8");
 
 describe("desktop update flow", () => {
+  test("enables automatic updates for packaged Linux AppImages", () => {
+    expect(mainSource).not.toContain('process.platform === "linux" || !app.isPackaged');
+    expect(mainSource).toContain('autoUpdateSupported: true');
+    expect(mainSource).toContain('process.env.GITHUB_ACTIONS === "true"');
+    expect(mainSource).toContain("Linux update verification requires a loopback HTTP feed");
+    expect(systemInfoSource).toContain("desktopAutoUpdateSupported");
+    expect(systemInfoSource).toContain('t("systemInfo.desktopDownloadLatest")');
+  });
+
   test("downloads updates in the background and relaunches after installation", () => {
     expect(mainSource).toContain('autoUpdater.autoDownload = process.platform !== "win32"');
     expect(mainSource).toContain("autoUpdater.autoRunAppAfterInstall = true");
@@ -39,7 +48,11 @@ describe("desktop update flow", () => {
     expect(preloadSource).toContain('systemInfo: () => ipcRenderer.invoke("desktop:system-info")');
     expect(systemInfoSource).toContain("getClientRuntimeDiagnostics");
     expect(systemInfoSource).toContain('t("systemInfo.runtimeEngine")');
+    expect(systemInfoSource).toContain('t("systemInfo.deviceModel")');
     expect(systemInfoSource).toContain('t("systemInfo.connectionSection")');
+    expect(mainSource).toContain("deviceModel: desktopDeviceModel()");
+    expect(systemInfoSource).not.toContain('t("systemInfo.dataDirectory")');
+    expect(mainSource).toContain("dataDir: sidecarDataDirectory(activeAccountId)");
   });
 
   test("rechecks for updates while a packaged app remains open", () => {
@@ -67,5 +80,15 @@ describe("desktop update flow", () => {
     expect(noticeSource).toContain('role="alert"');
     expect(notebookPaneSource).toContain("<DesktopUpdateNotice />");
     expect(notebookPaneSource).toContain('className="flex items-center gap-1"');
+  });
+
+  test("does not hold auto-restart while the GitHub release is newer than the instance", () => {
+    expect(mainSource).not.toContain("shouldHoldAutoRestartUpdate");
+    expect(mainSource).not.toContain("holdAutoRestartUpdate");
+    expect(mainSource).not.toContain("heldUpdateVersion");
+    expect(mainSource).not.toContain("update.held-for-instance");
+    expect(mainSource).toContain("promptForDownloadedUpdate(downloadedUpdateVersion)");
+    expect(systemInfoSource).toContain("clientAheadOfInstanceByPlatform");
+    expect(systemInfoSource).toContain("isClientAheadOfInstance");
   });
 });

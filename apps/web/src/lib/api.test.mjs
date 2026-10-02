@@ -74,7 +74,7 @@ const {
 
 describe("desktop instance setup", () => {
   test("can retry with a valid URL after invalid input", async () => {
-    await expect(saveDesktopApiBaseUrl("not-an-instance")).rejects.toThrow();
+    await expect(saveDesktopApiBaseUrl("ftp://example.com")).rejects.toThrow();
 
     const saving = saveDesktopApiBaseUrl(" https://notes.example.com/ ");
     await Promise.resolve();
@@ -98,6 +98,25 @@ describe("desktop instance setup", () => {
     expect(calls).toEqual([["bridge:start", "https://demo.edgeever.org"]]);
     completeSave();
     await expect(saving).resolves.toBe("https://demo.edgeever.org");
+  });
+
+  test("prefixes https when the instance host has no protocol", async () => {
+    calls.length = 0;
+    const saving = saveDesktopApiBaseUrl(" example.workers.dev/ ");
+    await Promise.resolve();
+    expect(calls).toEqual([["bridge:start", "https://example.workers.dev"]]);
+    completeSave();
+    await expect(saving).resolves.toBe("https://example.workers.dev");
+    expect(storage.get(DESKTOP_API_BASE_URL_STORAGE_KEY)).toBe("https://example.workers.dev");
+  });
+
+  test("keeps an explicit http instance URL", async () => {
+    calls.length = 0;
+    const saving = saveDesktopApiBaseUrl("http://127.0.0.1:8787/");
+    await Promise.resolve();
+    expect(calls).toEqual([["bridge:start", "http://127.0.0.1:8787"]]);
+    completeSave();
+    await expect(saving).resolves.toBe("http://127.0.0.1:8787");
   });
 
   test("clears the cached session when the login form changes instances", async () => {
@@ -126,6 +145,14 @@ describe("desktop instance setup", () => {
     expect(storage.get(DESKTOP_API_BASE_URL_STORAGE_KEY)).toBe("https://other.example.com");
     expect(getConfiguredDesktopApiBaseUrl()).toBe("https://other.example.com");
     window.edgeeverDesktop.apiBaseUrl = "";
+  });
+
+  test("ignores a leftover desktop instance URL in the browser", () => {
+    storage.set(DESKTOP_API_BASE_URL_STORAGE_KEY, "https://example.workers.dev");
+    window.edgeeverDesktop.isAvailable = false;
+    expect(getConfiguredDesktopApiBaseUrl()).toBe("");
+    window.edgeeverDesktop.isAvailable = true;
+    expect(getConfiguredDesktopApiBaseUrl()).toBe("https://example.workers.dev");
   });
 
   test("preserves the desktop token when refreshing the same authenticated session", async () => {
@@ -274,7 +301,45 @@ describe("desktop instance setup", () => {
     await cacheDesktopSession(await api.login({ username: "admin", password: "secret" }));
   });
 
-  test("uses the desktop session token and stops network retries after a 401", async () => {
+  test("keeps the desktop session after a route-specific 401", async () => {
+    events.length = 0;
+    await cacheDesktopSession({
+      authRequired: true,
+      authenticated: true,
+      demoMode: false,
+      sessionToken: "desktop-session-token",
+      user: { id: "user-1", username: "admin", displayName: null, role: "owner" },
+    });
+
+    const requests = [];
+    globalThis.fetch = async (url, init) => {
+      requests.push({ url, authorization: new Headers(init?.headers).get("Authorization") });
+      if (String(url).endsWith("/api/v1/auth/session")) {
+        return Response.json({ authRequired: true, authenticated: true, demoMode: false, user: { id: "user-1" } });
+      }
+      if (String(url).endsWith("/api/v1/auth/sessions")) return Response.json({ sessions: [] });
+      return Response.json({ error: { code: "unauthorized", message: "Authentication required" } }, { status: 401 });
+    };
+
+    await expect(api.changePassword({
+      currentPassword: "old-password",
+      newPassword: "new-password",
+      confirmPassword: "new-password",
+    })).rejects.toMatchObject({ status: 401 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    await expect(api.listLoginDeviceSessions()).resolves.toEqual({ sessions: [] });
+
+    expect(requests.map(({ url }) => new URL(url).pathname)).toEqual([
+      "/api/v1/auth/change-password",
+      "/api/v1/auth/session",
+      "/api/v1/auth/sessions",
+    ]);
+    expect(requests.every(({ authorization }) => authorization === "Bearer desktop-session-token")).toBe(true);
+    expect(secureSessionToken).toBe("desktop-session-token");
+    expect(events).toEqual([]);
+  });
+
+  test("uses the desktop session token and stops network retries after a confirmed 401", async () => {
     calls.length = 0;
     events.length = 0;
     storage.set(DESKTOP_API_BASE_URL_STORAGE_KEY, "https://notes.example.com");
@@ -289,6 +354,9 @@ describe("desktop instance setup", () => {
     const requests = [];
     globalThis.fetch = async (url, init) => {
       requests.push({ url, authorization: new Headers(init?.headers).get("Authorization") });
+      if (String(url).endsWith("/api/v1/auth/session")) {
+        return Response.json({ authRequired: true, authenticated: false, demoMode: false, user: null });
+      }
       return new Response(JSON.stringify({ error: { code: "unauthorized", message: "Authentication required" } }), {
         status: 401,
         headers: { "Content-Type": "application/json" },
@@ -296,10 +364,14 @@ describe("desktop instance setup", () => {
     };
 
     await expect(api.syncBootstrap({ limit: 200 })).rejects.toMatchObject({ status: 401 });
+    await new Promise((resolve) => setTimeout(resolve, 0));
     await expect(api.syncBootstrap({ limit: 200 })).rejects.toMatchObject({ status: 401 });
 
     expect(requests).toEqual([{
       url: "https://notes.example.com/api/v1/sync/bootstrap?limit=200",
+      authorization: "Bearer desktop-session-token",
+    }, {
+      url: "https://notes.example.com/api/v1/auth/session",
       authorization: "Bearer desktop-session-token",
     }]);
     expect(events).toEqual(["edgeever:unauthorized"]);
@@ -392,22 +464,41 @@ describe("desktop instance setup", () => {
     }
   });
 
-  test("sends the disabled-by-default AI streaming preference and honors opt-in", async () => {
+  test("does not opt the web proxy into AI streaming", async () => {
     const requestBodies = [];
-    globalThis.fetch = async (_url, init) => {
+    globalThis.fetch = async (url, init) => {
+      if (String(url).includes("/api/v1/ai/direct-target")) {
+        return new Response("{}", { status: 404 });
+      }
       requestBodies.push(JSON.parse(String(init?.body)));
       return new Response('data: {"type":"finish"}\n\n', {
         headers: { "Content-Type": "text/event-stream" },
       });
     };
-    const payload = { action: "summarize", title: "Note", contentMarkdown: "Body" };
 
-    storage.delete("edgeever.aiStreamingEnabled");
-    await api.streamAiGeneration(payload, { onEvent: () => {} });
-    storage.set("edgeever.aiStreamingEnabled", "true");
-    await api.streamAiGeneration(payload, { onEvent: () => {} });
-    await api.streamAiGeneration({ ...payload, stream: false }, { onEvent: () => {} });
+    await api.streamAiGeneration(
+      { action: "summarize", title: "Note", contentMarkdown: "Body" },
+      { onEvent: () => {} },
+    );
 
-    expect(requestBodies.map((body) => body.stream)).toEqual([false, true, false]);
+    expect(requestBodies).toHaveLength(1);
+    expect(requestBodies[0].stream).toBeUndefined();
+  });
+
+  test("streams infographic agent tool events through the authenticated client", async () => {
+    let requestPath = "";
+    let requestBody;
+    globalThis.fetch = async (url, init) => {
+      requestPath = String(url);
+      requestBody = JSON.parse(String(init?.body));
+      return new Response('data: {"type":"proposal","template":"list-grid-simple","data":{"title":"示例","lists":[{"label":"A"}]},"explanation":"已创建"}\n\ndata: {"type":"finish"}\n\n', {
+        headers: { "Content-Type": "text/event-stream" },
+      });
+    };
+    const received = [];
+    await api.streamInfographicAgent({ prompt: "做个列表", currentContent: "", candidates: ["list-grid-simple"], history: [] }, { onEvent: (event) => received.push(event) });
+    expect(requestPath).toContain("/api/v1/ai/infographic-agent");
+    expect(requestBody.prompt).toBe("做个列表");
+    expect(received.map((event) => event.type)).toEqual(["proposal", "finish"]);
   });
 });

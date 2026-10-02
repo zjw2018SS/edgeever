@@ -10,7 +10,9 @@ import {
   resolveMergedMemoTitle,
   isSuspiciousMemoOverwrite,
   isMemoEditBindingValid,
+  listTableAttachmentResourceIds,
   normalizeTags,
+  parseTableDocument,
   type MemoDetail,
   type MemoEditSession,
   type MemoSummary,
@@ -21,6 +23,7 @@ import { auditStatement } from "./audit";
 import type { AppContext, AuditActor, AuthContext, Bindings } from "./api-context";
 import { AppError } from "./app-error";
 import { createId, isoNow, parseJsonArray } from "./entity-utils";
+import { workspaceInboxId } from "./notebook-service";
 import { sha256 } from "./hash-utils";
 import { getRequiredString } from "./mcp-json-rpc";
 import {
@@ -140,6 +143,20 @@ export const getCurrentWorkspaceIdentity = async (db: DatabaseAdapter, auth: Aut
   };
 };
 
+const DATE_ONLY_TIME_BOUND = /^\d{4}-\d{2}-\d{2}$/;
+
+export const normalizeSearchTimeBound = (value: string | null | undefined, bound: "after" | "before"): string | null => {
+  const raw = value?.trim();
+  if (!raw) return null;
+  const expanded = DATE_ONLY_TIME_BOUND.test(raw)
+    ? bound === "after" ? `${raw}T00:00:00.000Z` : `${raw}T23:59:59.999Z`
+    : raw;
+  if (Number.isNaN(Date.parse(expanded))) {
+    throw new AppError("invalid_params", "Time range must be an ISO 8601 date or date-time.", 400);
+  }
+  return expanded;
+};
+
 export const searchMemoSummaries = async (
   db: DatabaseAdapter,
   options: {
@@ -162,6 +179,10 @@ export const searchMemoSummaries = async (
   const limit = clampNumber(options.limit, 1, 100);
   const filters = ["m.workspace_id = ?", "m.is_deleted = 0"];
   const binds: unknown[] = [options.workspaceId];
+  const createdAfter = normalizeSearchTimeBound(options.createdAfter, "after");
+  const createdBefore = normalizeSearchTimeBound(options.createdBefore, "before");
+  const updatedAfter = normalizeSearchTimeBound(options.updatedAfter, "after");
+  const updatedBefore = normalizeSearchTimeBound(options.updatedBefore, "before");
 
   if (notebookId) {
     filters.push("m.notebook_id = ?");
@@ -173,24 +194,24 @@ export const searchMemoSummaries = async (
     binds.push(options.workspaceId, tag);
   }
 
-  if (options.createdAfter) {
+  if (createdAfter) {
     filters.push("m.created_at >= ?");
-    binds.push(options.createdAfter);
+    binds.push(createdAfter);
   }
 
-  if (options.createdBefore) {
+  if (createdBefore) {
     filters.push("m.created_at <= ?");
-    binds.push(options.createdBefore);
+    binds.push(createdBefore);
   }
 
-  if (options.updatedAfter) {
+  if (updatedAfter) {
     filters.push("m.updated_at >= ?");
-    binds.push(options.updatedAfter);
+    binds.push(updatedAfter);
   }
 
-  if (options.updatedBefore) {
+  if (updatedBefore) {
     filters.push("m.updated_at <= ?");
-    binds.push(options.updatedBefore);
+    binds.push(updatedBefore);
   }
 
   if (options.isPinned !== null && options.isPinned !== undefined) {
@@ -596,7 +617,13 @@ export const restoreMemosRecord = async (
   const needsInbox = rows.results.some((row) => !activeNotebookIds.has(row.notebook_id));
 
   const inbox = needsInbox
-    ? await db.prepare(`SELECT id FROM notebooks WHERE workspace_id = ? AND slug = 'inbox' AND is_deleted = 0 LIMIT 1`).bind(workspaceId).first<{ id: string }>()
+    ? await db.prepare(
+      `SELECT id FROM notebooks
+       WHERE workspace_id = ? AND is_deleted = 0
+         AND (id = ? OR id = 'nb_inbox' OR slug = 'inbox')
+       ORDER BY CASE WHEN id = ? THEN 0 WHEN id = 'nb_inbox' THEN 1 ELSE 2 END
+       LIMIT 1`,
+    ).bind(workspaceId, workspaceInboxId(workspaceId), workspaceInboxId(workspaceId)).first<{ id: string }>()
     : null;
   if (needsInbox && !inbox) {
     throw new AppError("restore_notebook_missing", "Original notebooks were deleted and the default inbox is unavailable.", 409);
@@ -1150,6 +1177,12 @@ export const importMemosRecord = async (
   };
 };
 
+export type ReleasedTableResource = {
+  id: string;
+  objectKey: string;
+  storageConfigId: string;
+};
+
 export const updateMemoRecord = async (
   db: DatabaseAdapter,
   workspaceId: string,
@@ -1160,7 +1193,7 @@ export const updateMemoRecord = async (
   requireEditSession = false,
   commit?: MemoMutationCommit,
 ): Promise<
-  | { memo: MemoDetail; error?: never; message?: never; status?: never; details?: never }
+  | { memo: MemoDetail; releasedResources?: ReleasedTableResource[]; error?: never; message?: never; status?: never; details?: never }
   | { error: string; message: string; status?: number; details?: Record<string, unknown> }
 > => {
   const current = await getMemoDetailRow(db, workspaceId, id);
@@ -1309,6 +1342,33 @@ export const updateMemoRecord = async (
   const tags = input.tags === undefined ? parseJsonArray(current.tags_json) : normalizeTags(input.tags);
   const excerpt = createExcerpt(contentText);
   const notebookId = input.notebookId ?? current.notebook_id;
+  const currentTable = parseTableDocument(current.content_markdown);
+  const nextTable = parseTableDocument(contentMarkdown);
+  if (currentTable && !nextTable) {
+    return {
+      error: "table_update_required",
+      message: "Structured table content must stay a structured table.",
+      status: 409,
+    };
+  }
+  const removedAttachmentIds = currentTable && nextTable
+    ? [...listTableAttachmentResourceIds(currentTable)].filter((resourceId) => !listTableAttachmentResourceIds(nextTable).has(resourceId))
+    : [];
+  const releasedResources = removedAttachmentIds.length
+    ? await db.prepare(
+      `SELECT id, object_key, storage_config_id
+       FROM resources
+       WHERE memo_id = ? AND is_deleted = 0 AND id IN (${removedAttachmentIds.map(() => "?").join(", ")})`,
+    ).bind(id, ...removedAttachmentIds).all<ReleasedTableResource & { object_key: string; storage_config_id: string }>()
+    : { results: [] };
+  const releasedResourceRows = (releasedResources.results ?? []).map((row) => ({
+    id: row.id,
+    objectKey: row.object_key,
+    storageConfigId: row.storage_config_id,
+  }));
+  const releaseResourceStatements = releasedResourceRows.map((resource) => db.prepare(
+    `UPDATE resources SET is_deleted = 1, deleted_at = ?, updated_at = ? WHERE id = ? AND memo_id = ? AND is_deleted = 0`,
+  ).bind(updatedAt, updatedAt, resource.id, id));
   const contentHash = await sha256(contentMarkdown + JSON.stringify(contentJson));
   const unchanged =
     notebookId === current.notebook_id
@@ -1360,6 +1420,7 @@ export const updateMemoRecord = async (
   await db.batch([
     ...(commit?.before ?? []),
     ...revisionStatements,
+    ...releaseResourceStatements,
     db
       .prepare(
         `UPDATE memos
@@ -1392,7 +1453,7 @@ export const updateMemoRecord = async (
     return { error: "not_found", message: "Memo not found after update" };
   }
 
-  return { memo };
+  return { memo, releasedResources: releasedResourceRows };
 };
 
 const parseDoc = (json: string): TiptapDoc => {

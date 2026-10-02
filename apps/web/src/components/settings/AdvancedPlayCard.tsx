@@ -33,7 +33,7 @@ export const AdvancedPlayCard = () => {
             <button className="flex w-full min-w-0 items-start justify-between gap-3 text-left" type="button">
               <span className="min-w-0">
                 <CardTitle className="flex items-center gap-2 text-sm">
-                  <Sparkles className="h-4 w-4 text-emerald-700" />
+                  <Sparkles className="h-4 w-4 text-slate-900" />
                   {t("advancedPlay.title")}
                 </CardTitle>
                 <CardDescription className="mt-1 text-xs text-slate-500">{t("advancedPlay.description")}</CardDescription>
@@ -54,13 +54,13 @@ export const AdvancedPlayCard = () => {
               const prompt = t(`advancedPlay.prompts.${key}.prompt`);
 
               return (
-                <div key={key} className="rounded-lg border border-slate-200 bg-white p-3.5">
+                <div key={key} className="rounded-lg border border-slate-200 bg-card p-3.5">
                   <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
                     <div className="text-sm font-semibold text-slate-900">{title}</div>
                     <Button
                       size="sm"
                       variant="outline"
-                      className="h-8 w-full gap-1.5 justify-center bg-white px-2.5 text-xs sm:w-auto"
+                      className="h-8 w-full gap-1.5 justify-center bg-card px-2.5 text-xs sm:w-auto"
                       type="button"
                       onClick={() => void handleCopyPrompt(title, prompt)}
                     >
