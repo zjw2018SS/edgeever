@@ -7,24 +7,10 @@ on:
         description: "Upload the signed arm64 APK to this existing Draft GitHub Release"
         required: true
         type: string
-  release:
-    types: [published]
-  push:
-    branches:
-      - main
-    paths:
-      - "apps/mobile/**"
-      - "packages/client/**"
-      - "packages/shared/**"
-      - "bun.lock"
-      - ".github/workflows/mobile-build.yml"
-      - "scripts/build-android-local.sh"
-      - "scripts/verify-android-apk-signature.mjs"
-      - "scripts/download-play-universal-apk.mjs"
 
 permissions:
   actions: read
-  contents: write
+  contents: read
 
 concurrency:
   group: edgeever-mobile-android-${{ github.ref }}-${{ github.event_name }}
@@ -32,6 +18,9 @@ concurrency:
 
 jobs:
   release-plan:
+    permissions:
+      actions: read
+      contents: write
     if: >-
       ${{
         github.repository == 'tianma-if/edgeever' &&
@@ -151,6 +140,9 @@ jobs:
           node scripts/verify-android-apk-signature.mjs "$apk_path"
 
   restore-invalid-published-release:
+    permissions:
+      actions: read
+      contents: write
     needs: release-plan
     if: >-
       ${{
@@ -169,6 +161,9 @@ jobs:
         run: gh release edit "$CURRENT_TAG" --repo "$GITHUB_REPOSITORY" --draft=true
 
   reuse-release-apk:
+    permissions:
+      actions: read
+      contents: write
     needs: release-plan
     if: >-
       ${{
@@ -206,6 +201,9 @@ jobs:
             --clobber
 
   android:
+    permissions:
+      actions: read
+      contents: write
     needs: release-plan
     if: >-
       ${{
@@ -307,6 +305,9 @@ jobs:
         run: rm -f "$RUNNER_TEMP/edgeever-upload.p12"
 
   native-build-timings:
+    permissions:
+      actions: read
+      contents: write
     needs: android
     if: >-
       ${{

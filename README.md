@@ -1,3 +1,5 @@
+> **This fork uses manual upstream updates.** Synchronize upstream locally; retained Actions require manual dispatch. Existing Cloudflare Git builds are allowed; check deployment impact before pushing. See [manual update guide](MANUAL-UPDATES.md).
+
 <div align="center">
   <h1>
     <img src="assets/brand/edgeever-icon.svg" alt="EdgeEver logo" width="48" align="absmiddle" /> EdgeEver

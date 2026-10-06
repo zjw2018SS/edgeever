@@ -1,9 +1,6 @@
 name: Deploy personal EdgeEver
 
 on:
-  release:
-    types:
-      - published
   workflow_dispatch:
 
 permissions:

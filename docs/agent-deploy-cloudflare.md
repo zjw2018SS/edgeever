@@ -1,3 +1,5 @@
+> **Personal fork policy:** follow [MANUAL-UPDATES.md](../MANUAL-UPDATES.md). Do not enable the upstream updater. Existing CF Git builds are allowed; check deployment impact before an authorized push. The steps below describe upstream installation and require review against the existing instance configuration.
+
 # AI Agent Cloudflare Deployment Guide
 
 This document defines the standard operating specifications and conventions for AI Agents (and automated deployment scripts) deploying EdgeEver on Cloudflare.

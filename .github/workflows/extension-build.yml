@@ -1,20 +1,6 @@
 name: Build browser extensions
 
 on:
-  pull_request:
-    paths:
-      - "apps/extension/**"
-      - "package.json"
-      - "bun.lock"
-      - ".github/workflows/extension-build.yml"
-  push:
-    branches:
-      - main
-    paths:
-      - "apps/extension/**"
-      - "package.json"
-      - "bun.lock"
-      - ".github/workflows/extension-build.yml"
   workflow_dispatch:
 
 permissions:

@@ -1,61 +1,12 @@
 name: Build and publish Docker image
 
 on:
-  pull_request:
-    paths:
-      - "apps/api/**"
-      - "apps/web/**"
-      - "packages/**"
-      - "docs/**"
-      - "scripts/self-hosted-*.mjs"
-      - "migrations/**"
-      - "patches/**"
-      - "Dockerfile"
-      - ".dockerignore"
-      - "compose.yaml"
-      - "bunfig.toml"
-      - "package.json"
-      - "bun.lock"
-      - "tailwind.config.ts"
-      - "tsconfig.json"
-      - ".github/workflows/docker-image.yml"
-      - ".github/workflows/docker-tcr-mirror.yml"
-      - ".cnb.yml"
-      - "scripts/publish-tcr-image.sh"
-      - "scripts/prune-tcr-sha-tags.mjs"
-  push:
-    branches:
-      - main
-    paths:
-      - "apps/api/**"
-      - "apps/web/**"
-      - "packages/**"
-      - "docs/**"
-      - "scripts/self-hosted-*.mjs"
-      - "migrations/**"
-      - "patches/**"
-      - "Dockerfile"
-      - ".dockerignore"
-      - "compose.yaml"
-      - "bunfig.toml"
-      - "package.json"
-      - "bun.lock"
-      - "tailwind.config.ts"
-      - "tsconfig.json"
-      - ".github/workflows/docker-image.yml"
-      - ".github/workflows/docker-tcr-mirror.yml"
-      - ".cnb.yml"
-      - "scripts/publish-tcr-image.sh"
-      - "scripts/prune-tcr-sha-tags.mjs"
   workflow_dispatch:
     inputs:
       release_tag:
         description: "Draft release tag to publish (for example v1.33.0); leave empty for main"
         required: false
         type: string
-  release:
-    types:
-      - published
 
 permissions:
   contents: read

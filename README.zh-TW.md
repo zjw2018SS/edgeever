@@ -1,3 +1,5 @@
+> **本 Fork 使用手動上游更新。** 上游僅在本機同步，保留的 Actions 均手動執行。允許 CF 原生自動建置，推送前核對部署影響。見[手動更新說明](MANUAL-UPDATES.zh-CN.md)。
+
 <div align="center">
   <h1>
     <img src="assets/brand/edgeever-icon.svg" alt="EdgeEver Logo" width="48" align="absmiddle" /> EdgeEver

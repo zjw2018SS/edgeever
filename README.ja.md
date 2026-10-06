@@ -1,3 +1,5 @@
+> **この Fork は上流を手動で更新します。** 上流の同期はローカルで行い、Actions は手動で実行します。既存の Cloudflare Git 自動ビルドは許可されます。push 前にデプロイへの影響を確認してください。[手動更新ガイド](MANUAL-UPDATES.md)。
+
 <div align="center">
   <h1>
     <img src="assets/brand/edgeever-icon.svg" alt="EdgeEver のロゴ" width="48" align="absmiddle" /> EdgeEver

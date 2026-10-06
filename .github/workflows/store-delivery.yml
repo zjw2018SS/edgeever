@@ -38,7 +38,7 @@ on:
         type: string
 
 permissions:
-  contents: write
+  contents: read
 
 concurrency:
   group: edgeever-store-delivery-${{ inputs.release_tag }}
@@ -46,6 +46,8 @@ concurrency:
 
 jobs:
   plan:
+    permissions:
+      contents: write
     if: github.repository == 'tianma-if/edgeever'
     name: Validate store delivery source
     runs-on: ubuntu-latest
@@ -135,6 +137,8 @@ jobs:
             tee -a "$GITHUB_OUTPUT"
 
   android:
+    permissions:
+      contents: write
     needs: plan
     if: >-
       ${{
@@ -267,6 +271,8 @@ jobs:
         run: rm -f "$RUNNER_TEMP/edgeever-upload.p12"
 
   ios:
+    permissions:
+      contents: write
     needs: plan
     if: >-
       ${{

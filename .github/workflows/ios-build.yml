@@ -1,21 +1,14 @@
 name: Build EdgeEver iOS
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "apps/ios/**"
-      - ".github/workflows/ios-build.yml"
-  pull_request:
-    paths:
-      - "apps/ios/**"
-      - ".github/workflows/ios-build.yml"
   workflow_dispatch:
 
 concurrency:
   group: edgeever-ios-${{ github.ref }}
   cancel-in-progress: true
+
+permissions:
+  contents: read
 
 jobs:
   build-and-test:

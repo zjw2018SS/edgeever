@@ -9,11 +9,12 @@ on:
         type: string
 
 permissions:
-  # Draft Releases are only visible to a token with repository write access.
-  contents: write
+  contents: read
 
 jobs:
   audit:
+    permissions:
+      contents: write
     if: github.repository == 'tianma-if/edgeever'
     name: Require Play-signed Draft APK
     runs-on: ubuntu-latest

@@ -1,13 +1,6 @@
 name: Sync Docker installer mirror
 
 on:
-  push:
-    branches:
-      - main
-    paths:
-      - "apps/site/public/install.sh"
-      - "apps/site/public/compose.yaml"
-      - ".github/workflows/sync-docker-installer.yml"
   workflow_dispatch:
 
 permissions:
