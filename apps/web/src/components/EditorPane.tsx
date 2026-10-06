@@ -63,6 +63,7 @@ import {
   remapEditorInstanceMemoIdentity,
 } from "./editor/editor-instance-identity";
 import {
+  analyzeMarkdownModeContent,
   isMarkdownSourceUnchanged,
   resolveMarkdownModeContent,
 } from "./editor/editor-mode-content";
@@ -265,8 +266,10 @@ import {
   type NoteLinkHintPosition,
 } from "./editor/EditorPaneChrome";
 import {
+  getWritableEditorMemoFields,
   resolveEditorDraftState,
   shouldReplaceEditorDocument,
+  type EditorMemoFields,
 } from "./editor/editor-draft-state";
 import {
   pendingEditorInsertMatchesMemo,
@@ -436,8 +439,10 @@ const RichEditorPane = ({
   const queryClient = useQueryClient();
   const resourceInsertionLimit = useMemo(createFileBatchQueue, []);
   const isSelectionMode = Boolean(selectionActionBar);
-  const [title, setTitle] = useState("");
-  const [tagsText, setTagsText] = useState("");
+  // Keep field ownership and values in one React state update. memoRef changes
+  // synchronously during hydration, before a new title/tags render can commit.
+  const [memoFields, setMemoFields] = useState<EditorMemoFields>({ memoId: null, title: "", tagsText: "" });
+  const { memoId: fieldsMemoId, title, tagsText } = memoFields;
   const {
     dirtyVersion,
     hasUnsavedChanges,
@@ -450,6 +455,8 @@ const RichEditorPane = ({
     setSaveState,
   } = useEditorSaveStatus();
   const [storageSaveError, setStorageSaveError] = useState(false);
+  const [richTableEditBlocked, setRichTableEditBlocked] = useState(false);
+  const revertingUnsafeMarkdownRef = useRef(false);
   const [hydratedEditorMemoId, setHydratedEditorMemoId] = useState<string | null>(null);
 
   useEffect(() => {
@@ -823,6 +830,9 @@ const RichEditorPane = ({
         mappings,
       );
       memoRef.current = { ...currentMemo, id: nextMemoId };
+      setMemoFields((fields) => fields.memoId === previousMemoId
+        ? { ...fields, memoId: nextMemoId }
+        : fields);
       if (editingMemoIdRef.current === previousMemoId) editingMemoIdRef.current = nextMemoId;
       if (hydratedMemoIdRef.current === previousMemoId) {
         hydratedMemoIdRef.current = nextMemoId;
@@ -1339,6 +1349,8 @@ const RichEditorPane = ({
   const {
     clearMarkdownSnapshot,
     handleMarkdownModeChange,
+    handleMarkdownSourceReady,
+    getMarkdownSource,
     hydrateMarkdownSource,
     isMarkdownMode,
     markdownModeSnapshotRef,
@@ -1353,6 +1365,7 @@ const RichEditorPane = ({
     effectiveReadOnly: readOnly || (isMobileViewport && !mobileEditingActive),
     getMemoId: () => memoRef.current?.id,
     hydratingRef,
+    onUnsafeRichTableEdit: setRichTableEditBlocked,
   });
   const useMarkdownSourceEditor = !useMobilePlainTextEditor && isMarkdownMode;
 
@@ -1945,7 +1958,7 @@ const RichEditorPane = ({
       if (
         !currentMemo ||
         currentMemo.isDeleted ||
-        hydratedMemoIdRef.current !== currentMemo.id ||
+        !getWritableEditorMemoFields(memoFields, currentMemo.id, hydratedMemoIdRef.current, hydratingRef.current) ||
         (!useMobilePlainTextEditor && !isEditorReady(currentEditor))
       ) {
         return Promise.resolve();
@@ -1967,7 +1980,7 @@ const RichEditorPane = ({
         updatedAt: new Date().toISOString(),
       });
     },
-    [getMobilePlainTextValue, markdownSource, tagsText, title, useMarkdownSourceEditor, useMobilePlainTextEditor]
+    [getMobilePlainTextValue, markdownSource, memoFields, tagsText, title, useMarkdownSourceEditor, useMobilePlainTextEditor]
   );
 
   const markDirty = useCallback(() => {
@@ -1976,13 +1989,13 @@ const RichEditorPane = ({
       hydratingRef.current ||
       currentMemo?.isDeleted ||
       !currentMemo ||
-      hydratedMemoIdRef.current !== currentMemo.id
+      !getWritableEditorMemoFields(memoFields, currentMemo.id, hydratedMemoIdRef.current, hydratingRef.current)
     ) {
       return;
     }
 
     markDirtyStatus();
-  }, [markDirtyStatus]);
+  }, [markDirtyStatus, memoFields]);
 
   const getCurrentMarkdownForAi = useCallback(() => {
     if (useMobilePlainTextEditor) return getMobilePlainTextValue();
@@ -2189,17 +2202,19 @@ const RichEditorPane = ({
     }
 
     return JSON.stringify({
+      memoId: fieldsMemoId,
       title,
       tagsText,
       contentJson,
     });
-  }, [getCurrentContentJson, tagsText, title]);
+  }, [fieldsMemoId, getCurrentContentJson, tagsText, title]);
 
   useEffect(() => {
     const handleLocalDatabaseInterrupted = () => {
       const currentMemo = memoRef.current;
       const contentJson = getCurrentContentJson();
-      if (currentMemo && contentJson && !currentMemo.isDeleted) {
+      if (currentMemo && contentJson && !currentMemo.isDeleted &&
+        getWritableEditorMemoFields(memoFields, currentMemo.id, hydratedMemoIdRef.current, hydratingRef.current)) {
         persistEmergencyDraft({
           memoId: currentMemo.id,
           expectedRevision: currentMemo.revision,
@@ -2217,7 +2232,7 @@ const RichEditorPane = ({
 
     window.addEventListener(LOCAL_DATABASE_INTERRUPTED_EVENT, handleLocalDatabaseInterrupted);
     return () => window.removeEventListener(LOCAL_DATABASE_INTERRUPTED_EVENT, handleLocalDatabaseInterrupted);
-  }, [getCurrentContentJson, setHasUnsavedChanges, setSaveConflictInfo, setSaveState, tagsText, title]);
+  }, [getCurrentContentJson, memoFields, setHasUnsavedChanges, setSaveConflictInfo, setSaveState, tagsText, title]);
 
   useEffect(() => {
     const currentEditor = editorRef.current;
@@ -2232,8 +2247,7 @@ const RichEditorPane = ({
       setHydratedEditorMemoId(null);
       editingMemoIdRef.current = null;
       setHasUnsavedChanges(false);
-      setTitle("");
-      setTagsText("");
+      setMemoFields({ memoId: null, title: "", tagsText: "" });
       setMobilePlainText("");
       setMobilePlainTextElementValue(mobileTextAreaRef.current, "");
       setSaveState("idle");
@@ -2250,6 +2264,7 @@ const RichEditorPane = ({
 
     if (!sameMemo) {
       hydratedMemoIdRef.current = null;
+      editSessionRef.current = null;
       appliedEditorSourceKeyRef.current = null;
       clearMarkdownSnapshot();
       const immediateDraft = resolveEditorDraftState({ memo, draft: null, queuedUpdate: null });
@@ -2258,8 +2273,7 @@ const RichEditorPane = ({
       setHasUnsavedChanges(false);
       setSaveState("idle");
       setSaveConflictInfo(null);
-      setTitle(immediateDraft.title);
-      setTagsText(immediateDraft.tagsText);
+      setMemoFields({ memoId: memo.id, title: immediateDraft.title, tagsText: immediateDraft.tagsText });
       setMobilePlainText(immediateDraft.contentMarkdown);
       setMobilePlainTextElementValue(mobileTextAreaRef.current, immediateDraft.contentMarkdown);
       hydrateMarkdownSource(memo.id, immediateDraft.contentJson, immediateDraft.contentMarkdown);
@@ -2395,6 +2409,8 @@ const RichEditorPane = ({
         await localDb.drafts.delete(memo.id);
         removeEmergencyDraft(memo.id);
       }
+      // Draft cleanup is async; the selected memo may have changed meanwhile.
+      if (cancelled || editingMemoIdRef.current !== memo.id) return;
       const {
         title: nextTitle,
         tagsText: nextTagsText,
@@ -2466,8 +2482,7 @@ const RichEditorPane = ({
         setSaveState("idle");
         setSaveConflictInfo(null);
       }
-      setTitle(nextTitle);
-      setTagsText(nextTagsText);
+      setMemoFields({ memoId: memo.id, title: nextTitle, tagsText: nextTagsText });
       setMobilePlainText(nextMarkdown);
       const keptLiveMarkdown = hydrateMarkdownSource(memo.id, nextContent, nextMarkdown);
       setMobilePlainTextElementValue(mobileTextAreaRef.current, nextMarkdown);
@@ -2663,9 +2678,18 @@ const RichEditorPane = ({
   }, []);
 
   const handleMarkdownSourceChange = useCallback((value: string) => {
-    setMarkdownSource(value);
+    if (revertingUnsafeMarkdownRef.current) return;
+    if (!setMarkdownSource(value)) {
+      revertingUnsafeMarkdownRef.current = true;
+      try {
+        markdownSourceEditorRef.current?.replaceDocument(getMarkdownSource());
+      } finally {
+        revertingUnsafeMarkdownRef.current = false;
+      }
+      return;
+    }
     markDirty();
-  }, [markDirty]);
+  }, [getMarkdownSource, markDirty, setMarkdownSource]);
 
   const {
     handleCopyToWeChat,
@@ -2735,10 +2759,25 @@ const RichEditorPane = ({
   const saveMutation = useMutation({
     mutationFn: async () => {
       const currentMemo = memoRef.current;
+      if (useMarkdownSourceEditor && analyzeMarkdownModeContent(
+        markdownModeSnapshotRef.current,
+        currentMemo?.id,
+        markdownSource,
+      ).hasUnsafeRichTableEdit) {
+        setRichTableEditBlocked(true);
+        throw new Error("Rich table cell cannot be safely converted from Markdown");
+      }
       const contentJson = getCurrentContentJson();
       const editSession = editSessionRef.current;
+      const writableFields = getWritableEditorMemoFields(
+        memoFields,
+        currentMemo?.id ?? null,
+        hydratedMemoIdRef.current,
+        hydratingRef.current,
+      );
 
-      if (!currentMemo || !contentJson || !editSession || hydratedMemoIdRef.current !== currentMemo.id) {
+      if (!currentMemo || !contentJson || !editSession || editSession.memoId !== currentMemo.id ||
+        !writableFields) {
         throw new Error("No memo selected");
       }
 
@@ -2756,16 +2795,16 @@ const RichEditorPane = ({
         expectedRevision: currentMemo.revision,
         expectedContentHash: currentMemo.contentHash,
         editSessionId: editSession.id,
-        title,
+        title: writableFields.title,
         contentJson,
         contentMarkdown: useMarkdownSourceEditor ? markdownSource : undefined,
-        tags: parseTagsText(tagsText),
+        tags: parseTagsText(writableFields.tagsText),
       };
       persistEmergencyDraft({
         memoId: currentMemo.id,
         expectedRevision: currentMemo.revision,
-        title,
-        tagsText,
+        title: writableFields.title,
+        tagsText: writableFields.tagsText,
         contentJson,
         updatedAt: new Date().toISOString(),
       });
@@ -2777,11 +2816,17 @@ const RichEditorPane = ({
       setSaveState("saving");
     },
     onSuccess: async ({ memo: savedMemo, snapshot, queued }) => {
-      setStorageSaveError(false);
       removeEmergencyDraft(savedMemo.id);
+      // A previous note's save may finish after the user switches notes.
+      // Update its cache, but leave the active editor and save state alone.
+      if (memoRef.current?.id !== savedMemo.id) {
+        await onSaved(savedMemo);
+        return;
+      }
+      setStorageSaveError(false);
       memoRef.current = savedMemo;
       const currentEditSession = editSessionRef.current;
-      if (currentEditSession) {
+      if (currentEditSession?.memoId === savedMemo.id) {
         editSessionRef.current = {
           ...currentEditSession,
           baseRevision: savedMemo.revision,
@@ -2803,6 +2848,7 @@ const RichEditorPane = ({
       }
 
       await onSaved(savedMemo);
+      if (memoRef.current?.id !== savedMemo.id) return;
 
       if (currentSnapshot() === snapshot) {
         setMobilePlainText(docToMarkdown(savedMemo.contentJson));
@@ -3156,7 +3202,8 @@ const RichEditorPane = ({
 
   const markMobilePlainTextDirty = useCallback(() => {
     const currentMemo = memoRef.current;
-    if (hydratingRef.current || currentMemo?.isDeleted) {
+    if (hydratingRef.current || currentMemo?.isDeleted ||
+      !getWritableEditorMemoFields(memoFields, currentMemo?.id ?? null, hydratedMemoIdRef.current, hydratingRef.current)) {
       return;
     }
 
@@ -3193,7 +3240,7 @@ const RichEditorPane = ({
 
       mutateSave();
     }, EDITOR_LOCAL_SAVE_DELAY_MS);
-  }, [getMobilePlainTextValue, mutateSave, persistCurrentDraft, saveMutationPending, saveState, tagsText, title]);
+  }, [getMobilePlainTextValue, memoFields, mutateSave, persistCurrentDraft, saveMutationPending, saveState, tagsText, title]);
 
   useEffect(() => {
     if (!useMobilePlainTextEditor) {
@@ -3271,6 +3318,7 @@ const RichEditorPane = ({
 
     const { memo: remoteMemo } = await repository.adoptCloudMemo(currentMemo.id);
     await onSaved(remoteMemo);
+    if (memoRef.current?.id !== remoteMemo.id) return;
 
     setHasUnsavedChanges(false);
     setSaveConflictInfo(null);
@@ -3288,8 +3336,7 @@ const RichEditorPane = ({
     editingMemoIdRef.current = remoteMemo.id;
     appliedEditorSourceKeyRef.current = `memo:${remoteMemo.id}:${remoteMemo.revision}:${remoteMemo.updatedAt}:${remoteMemo.contentHash}:${nextTitle}:${nextTagsText}:${nextMarkdown}`;
 
-    setTitle(nextTitle);
-    setTagsText(nextTagsText);
+    setMemoFields({ memoId: remoteMemo.id, title: nextTitle, tagsText: nextTagsText });
     setMobilePlainText(nextMarkdown);
     hydrateMarkdownSource(remoteMemo.id, nextContent, nextMarkdown, { force: true });
     setMobilePlainTextElementValue(mobileTextAreaRef.current, nextMarkdown);
@@ -3476,15 +3523,20 @@ const RichEditorPane = ({
         notebookId,
       })
       .then(async (data) => {
-        memoRef.current = data.memo;
+        if (memoRef.current?.id === data.memo.id) memoRef.current = data.memo;
         await onSaved(data.memo);
+        if (memoRef.current?.id !== data.memo.id) return;
         setSaveState("saved");
-        window.setTimeout(() => setSaveState("idle"), 1200);
+        window.setTimeout(() => {
+          if (memoRef.current?.id === data.memo.id) setSaveState("idle");
+        }, 1200);
       })
-      .catch(() => setSaveState("error"))
+      .catch(() => {
+        if (memoRef.current?.id === sourceMemo.id) setSaveState("error");
+      })
       .finally(() => {
         setNotebookUpdatePending(false);
-        setMobileNotebookSheetOpen(false);
+        if (memoRef.current?.id === sourceMemo.id) setMobileNotebookSheetOpen(false);
       });
   };
 
@@ -3691,7 +3743,9 @@ const RichEditorPane = ({
                 value={title}
                 readOnly={effectiveReadOnly}
                 onValueChange={(nextTitle) => {
-                  setTitle(nextTitle);
+                  setMemoFields((fields) => fields.memoId === memo.id
+                    ? { ...fields, title: nextTitle }
+                    : fields);
                   persistCurrentDraft(nextTitle, tagsText, getMobilePlainTextValue());
                   markDirty();
                 }}
@@ -3713,7 +3767,9 @@ const RichEditorPane = ({
             onMobileNotebookPickerOpenChange={setMobileNotebookSheetOpen}
             onNotebookChange={handleNotebookChange}
             onTagsChange={(nextTagsText) => {
-              setTagsText(nextTagsText);
+              setMemoFields((fields) => fields.memoId === memo.id
+                ? { ...fields, tagsText: nextTagsText }
+                : fields);
               persistCurrentDraft(title, nextTagsText, getMobilePlainTextValue());
               markDirty();
             }}
@@ -4169,6 +4225,11 @@ const RichEditorPane = ({
               </>
             ) : useMarkdownSourceEditor ? (
               <div ref={markdownMenuAnchorRef} className="relative min-h-0 flex-1">
+                {richTableEditBlocked ? (
+                  <div role="alert" className="absolute inset-x-3 bottom-3 z-50 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-950 shadow-sm dark:border-amber-700 dark:bg-amber-950 dark:text-amber-100">
+                    {t("editor.richTableSourceProtection")}
+                  </div>
+                ) : null}
                 <Suspense fallback={<div className="h-full w-full" />}>
                   <MarkdownSourceEditor
                     ref={markdownSourceEditorRef}
@@ -4185,6 +4246,7 @@ const RichEditorPane = ({
                     }}
                     onLinkShortcut={openExternalLinkDialog}
                     onSelectionChange={syncMarkdownAiMenu}
+                    onReady={handleMarkdownSourceReady}
                     className="absolute inset-0 h-full w-full"
                   />
                 </Suspense>
