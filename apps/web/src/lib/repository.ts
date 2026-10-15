@@ -1,3 +1,5 @@
+import { assertLocalMemoSnapshot } from "./local-memo-guard";
+import { localizeDefaultMemoTemplate } from "@edgeever/shared/memo-template-seeds";
 import { markdownToDoc, type MemoDetail, type MemoRevision, type MemoSummary, type MemoTemplate, type Notebook, type Resource, type ResourceListItem, type ResourceStorageSummary, type TagSummary, type TiptapDoc } from "@edgeever/shared";
 import { api } from "@/lib/api";
 import {
@@ -61,7 +63,8 @@ export type EdgeEverRepository = {
   createTemplate(input: { name: string; description?: string | null; memoId?: string; title?: string | null; contentMarkdown?: string; tags?: string[] }): Promise<{ template: MemoTemplate }>;
   updateTemplate(templateId: string, input: { name?: string; description?: string | null; title?: string | null; contentMarkdown?: string; tags?: string[] }): Promise<{ template: MemoTemplate }>;
   deleteTemplate(templateId: string): Promise<{ ok: true }>;
-  useTemplate(templateId: string, notebookId: string): Promise<{ memo: MemoDetail }>;
+  /** With `locale`, an unedited default template is used in that UI language. */
+  useTemplate(templateId: string, notebookId: string, locale?: string): Promise<{ memo: MemoDetail }>;
   uploadMemoResource(memoId: string, file: File): Promise<{ resource: Resource }>;
   readResource(resourceId: string): Promise<Blob>;
   updateResource(resourceId: string, file: File, expectedContentHash: string): Promise<{ resource: Resource }>;
@@ -79,7 +82,7 @@ export type EdgeEverRepository = {
   listMemos(params: LocalMemoListParams): Promise<LocalMemoListResponse>;
   getMemo(memoId: string, includeDeleted?: boolean): Promise<{ memo: MemoDetail }>;
   createMemo(input: { notebookId: string; title?: string; contentJson?: TiptapDoc; contentMarkdown?: string; tags?: string[] }): Promise<{ memo: MemoDetail }>;
-  updateMemo(memo: MemoDetail, input: Omit<MemoUpdateSyncPayload, "memoId">): Promise<{ memo: MemoDetail; queued: true }>;
+  updateMemo(memo: MemoDetail, input: Omit<MemoUpdateSyncPayload, "memoId">, options?: { guardLocalSnapshot?: boolean }): Promise<{ memo: MemoDetail; queued: true }>;
   /**
    * Drop the local conflicted draft for a note and replace the local copy with
    * the authoritative cloud memo so the editor can rehydrate cleanly.
@@ -285,11 +288,12 @@ export const createWebRepository = (scope: string): EdgeEverRepository => {
     window.dispatchEvent(new CustomEvent("edgeever:sync-queue-changed"));
     return { ok: true as const };
   },
-  useTemplate: async (templateId, notebookId) => {
-    const template = (await listLocalTemplates(scope)).templates.find((candidate) => candidate.id === templateId);
+  useTemplate: async (templateId, notebookId, locale) => {
+    const stored = (await listLocalTemplates(scope)).templates.find((candidate) => candidate.id === templateId);
+    const template = stored && locale ? localizeDefaultMemoTemplate(stored, locale) : stored;
     if (!template) {
       if (isOffline()) throw new Error("Template is not available offline");
-      const result = await api.useTemplate(templateId, notebookId);
+      const result = await api.useTemplate(templateId, notebookId, locale);
       await putLocalMemo(scope, result.memo);
       return result;
     }
@@ -413,8 +417,11 @@ export const createWebRepository = (scope: string): EdgeEverRepository => {
     return { ok: true as const, deleted };
   },
   emptyTrash: async () => {
+    const memoIds = (await localDb.memos.where("scope").equals(scope).toArray())
+      .filter((memo) => memo.isDeleted)
+      .map((memo) => memo.id);
     const deleted = await applyLocalEmptyTrash(scope);
-    await queueLocalAction(scope, "memo.emptyTrash", "trash", {});
+    await queueLocalAction(scope, "memo.emptyTrash", "trash", { memoIds });
     window.dispatchEvent(new CustomEvent("edgeever:sync-queue-changed"));
     return { ok: true as const, deleted };
   },
@@ -532,10 +539,15 @@ export const createWebRepository = (scope: string): EdgeEverRepository => {
     return { memo };
   },
 
-  async updateMemo(memo, input) {
+  async updateMemo(memo, input, options) {
     const payload: MemoUpdateSyncPayload = { ...input, memoId: memo.id };
     const updated = await runLocalDatabaseOperationWithRecovery(() =>
       localDb.transaction("rw", [localDb.memos, localDb.syncQueue], async () => {
+        if (options?.guardLocalSnapshot) {
+          const current = await getLocalMemo(scope, memo.id);
+          const queued = await localDb.syncQueue.get(`memo.update:${memo.id}`);
+          assertLocalMemoSnapshot(current, memo, queued?.status === "conflict");
+        }
         const nextMemo = await putLocalMemoUpdate(scope, memo, payload);
         await putMemoUpdateQueueItem(payload, scope);
         return nextMemo;

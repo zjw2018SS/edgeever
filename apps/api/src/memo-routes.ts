@@ -19,7 +19,6 @@ import type { ListMemosInput, ListMemosResult } from "./memo-list-service";
 import { getActorLabel, getAuditActor, getWorkspaceId, requireScopes } from "./request-auth";
 import { deleteReleasedResourceObjects } from "./resource-service";
 import type { DatabaseAdapter } from "./storage-contract";
-
 type MemoRouteDependencies = {
   clampNumber: (value: number, min: number, max: number) => number;
   createImageResource: (context: AppContext, input: {
@@ -151,10 +150,11 @@ export const registerMemoRoutes = (
     if (denied) return denied;
 
     try {
+      const input = context.req.valid("json");
       const memo = await dependencies.createMemo(
         context.env.storage.db,
         getWorkspaceId(context),
-        context.req.valid("json"),
+        input,
         getAuditActor(context),
         getActorLabel(context),
       );
@@ -172,7 +172,11 @@ export const registerMemoRoutes = (
     const file = form.get("file");
     const notebookId = typeof form.get("notebookId") === "string" ? String(form.get("notebookId")).trim() : "";
     const title = typeof form.get("title") === "string" ? String(form.get("title")) : "";
-    const contentMarkdown = typeof form.get("contentMarkdown") === "string" ? String(form.get("contentMarkdown")) : "";
+    // multipart/form-data encodes line breaks in text fields as CRLF (browsers
+    // always, and newer Bun versions too), while notes store LF line breaks.
+    const contentMarkdown = typeof form.get("contentMarkdown") === "string"
+      ? String(form.get("contentMarkdown")).replace(/\r\n?/g, "\n")
+      : "";
     let tags: string[] = [];
     const tagsValue = form.get("tags");
     if (typeof tagsValue === "string" && tagsValue.trim()) {
@@ -189,7 +193,6 @@ export const registerMemoRoutes = (
     if (!(file instanceof File) || !notebookId || !contentMarkdown.includes("EDGEVERRESOURCEID")) {
       return badRequest(context, "notebookId, contentMarkdown, and an image file are required.");
     }
-
     const resourceId = createId("res");
     const markdown = contentMarkdown.replaceAll("EDGEVERRESOURCEID", resourceId);
     const actor = getAuditActor(context);

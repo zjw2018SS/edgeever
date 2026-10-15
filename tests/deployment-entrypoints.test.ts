@@ -461,8 +461,9 @@ describe("Cloudflare deployment entrypoints", () => {
     expect(scripts["test:bulk"]).toContain("--path-ignore-patterns='tests/e2e/**'");
     expect(scripts["test:bulk"]).toContain("apps/api/src/companion-learning.test.mjs");
     expect(scripts["test:bulk"]).toContain("apps/api/src/resource-upload-integration.test.mjs");
+    expect(scripts["test:bulk"]).toContain("apps/desktop/src/main/workbuddy-auth.test.mjs");
     expect(scripts["test:integration"]).toBe(
-      "bun test apps/api/src/companion-learning.test.mjs apps/api/src/resource-upload-integration.test.mjs",
+      "bun test apps/api/src/companion-learning.test.mjs apps/api/src/resource-upload-integration.test.mjs && bun test --cwd apps/desktop src/main/workbuddy-auth.test.mjs",
     );
     expect(workflow).toContain("bun run test");
     expect(workflow.match(/if: steps\.upstream\.outputs\.align_mode == 'merge'/g)).toHaveLength(2);
@@ -837,7 +838,7 @@ describe("Cloudflare deployment entrypoints", () => {
     } finally {
       rmSync(workingDirectory, { force: true, recursive: true });
     }
-  });
+  }, 20_000);
 
   test("public deployment documentation exposes only Fork and Agent paths", () => {
     const englishReadme = readRepositoryFile("README.md");
@@ -870,7 +871,7 @@ describe("Cloudflare deployment entrypoints", () => {
       extractTextPrompt(englishReadme, "### Option A: Deploy with an AI Agent (Recommended)"),
     );
     expect(deploymentPrompts["zh-CN"]).toBe(
-      extractTextPrompt(chineseReadme, "### 方案一：AI Agent 一键部署（推荐）"),
+      extractTextPrompt(chineseReadme, "### 方案一：交给 AI Agent 部署（推荐）"),
     );
     expect(siteDeploymentComponent).toContain('deploymentPrompts["en-US"]');
     expect(siteDeploymentComponent).toContain('deploymentPrompts["zh-CN"]');

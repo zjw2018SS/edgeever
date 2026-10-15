@@ -13,10 +13,16 @@ const require = createRequire(import.meta.url);
 const npmCli = path.join(path.dirname(require.resolve("npm")), "bin", "npm-cli.js");
 const REGISTRY_URL = "https://cdn.agentclientprotocol.com/registry/v1/latest/registry.json";
 const PI_PACKAGE_URL = "https://registry.npmjs.org/pi-acp/latest";
-const MAX_ARCHIVE_BYTES = 300 * 1024 * 1024;
-const MAX_EXTRACTED_BYTES = 1024 * 1024 * 1024;
+export const MAX_ARCHIVE_BYTES = 500 * 1024 * 1024;
+export const MAX_EXTRACTED_BYTES = 2 * 1024 * 1024 * 1024;
+// Official archives exceed 100 MB on macOS and 300 MB on Linux. Allow slow
+// downloads to complete while retaining a finite deadline and the size caps.
+export const ADAPTER_DOWNLOAD_TIMEOUT_MS = 10 * 60_000;
 const VERSION_PATTERN = /^\d+\.\d+\.\d+$/;
-const SUPPORTED_MAJOR = { codex: 2, antigravity: 1 };
+const SUPPORTED_MAJOR = { codex: 2, claudeCode: 0, antigravity: 1 };
+const NPM_PACKAGES = { codex: "@agentclientprotocol/codex-acp", claudeCode: "@agentclientprotocol/claude-agent-acp", piAgent: "pi-acp" };
+const MANAGED_IDS = ["codex", "claudeCode", "antigravity", "piAgent"];
+const npmEntryFile = (root, id) => path.join(root, "node_modules", ...NPM_PACKAGES[id].split("/"), "dist", "index.js");
 
 const platformTarget = (platform, arch) => {
   const system = { darwin: "darwin", linux: "linux", win32: "windows" }[platform];
@@ -33,12 +39,12 @@ const compareVersions = (left, right) => {
 
 const commandFile = (root, id, version, platform) => id === "antigravity"
   ? path.join(root, id, version, platform === "win32" ? "agy_acp_server.exe" : "agy_acp_server.par")
-  : path.join(root, id, version, "node_modules", ...(id === "codex" ? ["@agentclientprotocol", "codex-acp"] : ["pi-acp"]), "dist", "index.js");
+  : npmEntryFile(path.join(root, id, version), id);
 
 const antigravityArgs = (platform) => platform === "linux" ? ["--uid="] : [];
 
 export const managedAdapterCommand = (root, id, version, { platform = process.platform, executablePath = process.execPath } = {}) => {
-  if (!VERSION_PATTERN.test(version) || !["codex", "antigravity", "piAgent"].includes(id)) return null;
+  if (!VERSION_PATTERN.test(version) || !MANAGED_IDS.includes(id)) return null;
   const file = commandFile(root, id, version, platform);
   if (!existsSync(file)) return null;
   return id !== "antigravity"
@@ -48,7 +54,7 @@ export const managedAdapterCommand = (root, id, version, { platform = process.pl
 
 const readRegistry = async (fetchImpl) => {
   const response = await fetchImpl(REGISTRY_URL, { signal: AbortSignal.timeout(15_000), redirect: "error" });
-  if (!response.ok) throw new Error("registry_unavailable");
+  if (!response.ok) throw new Error(`registry_unavailable (HTTP ${response.status})`);
   const contentLength = Number(response.headers.get("content-length") || 0);
   if (contentLength > 1024 * 1024) throw new Error("registry_too_large");
   const raw = await response.text();
@@ -67,19 +73,20 @@ export const selectPiAdapterRelease = (entry) => {
 
 const readPiRelease = async (fetchImpl) => {
   const response = await fetchImpl(PI_PACKAGE_URL, { signal: AbortSignal.timeout(15_000), redirect: "error" });
-  if (!response.ok || Number(response.headers.get("content-length") || 0) > 1024 * 1024) throw new Error("registry_unavailable");
+  if (!response.ok) throw new Error(`registry_unavailable (HTTP ${response.status})`);
+  if (Number(response.headers.get("content-length") || 0) > 1024 * 1024) throw new Error("registry_too_large");
   const raw = await response.text();
   if (raw.length > 1024 * 1024) throw new Error("registry_too_large");
   return selectPiAdapterRelease(JSON.parse(raw));
 };
 
 export const selectAdapterRelease = (agents, id, { platform = process.platform, arch = process.arch } = {}) => {
-  const entry = agents.find((agent) => agent?.id === (id === "codex" ? "codex-acp" : "antigravity-acp"));
+  const entry = agents.find((agent) => agent?.id === ({ codex: "codex-acp", claudeCode: "claude-acp", antigravity: "antigravity-acp" }[id]));
   if (!entry || !VERSION_PATTERN.test(entry.version)) throw new Error("unsupported_release");
   if (Number(entry.version.split(".")[0]) !== SUPPORTED_MAJOR[id]) throw new Error("unsupported_release");
-  if (id === "codex") {
+  if (id === "codex" || id === "claudeCode") {
     const packageName = entry.distribution?.npx?.package;
-    if (packageName !== `@agentclientprotocol/codex-acp@${entry.version}`) throw new Error("unsupported_release");
+    if (packageName !== `${NPM_PACKAGES[id]}@${entry.version}`) throw new Error("unsupported_release");
     return { id, version: entry.version, kind: "npm", packageName };
   }
   const target = platformTarget(platform, arch);
@@ -113,8 +120,8 @@ const runNpm = (args, cwd, { executablePath = process.execPath, spawnImpl = spaw
 });
 
 const downloadArchive = async (url, destination, expectedHash, fetchImpl) => {
-  const response = await fetchImpl(url, { signal: AbortSignal.timeout(120_000), redirect: "error" });
-  if (!response.ok || !response.body) throw new Error("adapter_download_failed");
+  const response = await fetchImpl(url, { signal: AbortSignal.timeout(ADAPTER_DOWNLOAD_TIMEOUT_MS), redirect: "error" });
+  if (!response.ok || !response.body) throw new Error(`adapter_download_failed (HTTP ${response.status})`);
   if (Number(response.headers.get("content-length") || 0) > MAX_ARCHIVE_BYTES) throw new Error("adapter_too_large");
   const handle = await open(destination, "wx", 0o600);
   const hash = createHash("sha256");
@@ -216,50 +223,61 @@ export function createAcpAdapterManager({ root, fetchImpl = fetch, platform = pr
   };
 
   const install = (id, validate, { updateOnly = false } = {}) => {
-    if (!["codex", "antigravity", "piAgent"].includes(id)) return Promise.reject(new Error("unknown_adapter"));
+    if (!MANAGED_IDS.includes(id)) return Promise.reject(new Error("unknown_adapter"));
     if (inFlight.has(id)) return inFlight.get(id);
     const task = (async () => {
-      const previous = get(id);
-      if (updateOnly && !previous) return { updated: false, reason: "not_managed" };
-      const release = id === "piAgent"
-        ? await readPiRelease(fetchImpl)
-        : selectAdapterRelease(await readRegistry(fetchImpl), id, { platform, arch });
-      if (previous && compareVersions(release.version, previous.version) <= 0) return { updated: false, version: previous.version };
-      const versionRoot = path.join(root, id);
-      const target = path.join(versionRoot, release.version);
-      const stage = path.join(versionRoot, `.stage-${release.version}-${process.pid}-${Date.now()}`);
-      await mkdir(stage, { recursive: true, mode: 0o700 });
+      let updateStage = "registry";
       try {
-        if (release.kind === "npm") {
-          await installNpmImpl(["install", "--prefix", stage, "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", "--registry=https://registry.npmjs.org", release.packageName], stage, { executablePath, spawnImpl, npmPath });
-        } else {
-          const archive = path.join(stage, "adapter.zip");
-          await downloadImpl(release.archive, archive, release.sha256, fetchImpl);
-          await extractImpl(archive, stage, platform);
-          await rm(archive);
-          if (platform !== "win32") await chmod(path.join(stage, "agy_acp_server.par"), 0o700);
+        const previous = get(id);
+        if (updateOnly && !previous) return { updated: false, reason: "not_managed" };
+        const release = id === "piAgent"
+          ? await readPiRelease(fetchImpl)
+          : selectAdapterRelease(await readRegistry(fetchImpl), id, { platform, arch });
+        if (previous && compareVersions(release.version, previous.version) <= 0) return { updated: false, version: previous.version };
+        updateStage = "install";
+        const versionRoot = path.join(root, id);
+        const target = path.join(versionRoot, release.version);
+        const stage = path.join(versionRoot, `.stage-${release.version}-${process.pid}-${Date.now()}`);
+        await mkdir(stage, { recursive: true, mode: 0o700 });
+        try {
+          if (release.kind === "npm") {
+            await installNpmImpl(["install", "--prefix", stage, "--ignore-scripts", "--no-audit", "--no-fund", "--package-lock=false", "--registry=https://registry.npmjs.org", release.packageName], stage, { executablePath, spawnImpl, npmPath });
+          } else {
+            const archive = path.join(stage, "adapter.zip");
+            updateStage = "download";
+            await downloadImpl(release.archive, archive, release.sha256, fetchImpl);
+            updateStage = "extract";
+            await extractImpl(archive, stage, platform);
+            await rm(archive);
+            if (platform !== "win32") await chmod(path.join(stage, "agy_acp_server.par"), 0o700);
+          }
+          // Inspect the staged command before making it visible to future sessions.
+          const stagedFile = release.kind === "npm"
+            ? npmEntryFile(stage, id)
+            : path.join(stage, platform === "win32" ? "agy_acp_server.exe" : "agy_acp_server.par");
+          if (!existsSync(stagedFile)) throw new Error("adapter_install_failed");
+          const stagedCommand = release.kind === "npm"
+            ? { command: executablePath, args: [stagedFile], env: { ELECTRON_RUN_AS_NODE: "1" } }
+            : { command: stagedFile, args: antigravityArgs(platform) };
+          updateStage = "validate";
+          const result = await validate(stagedCommand);
+          if (result?.state === "needs_login" && previous) {
+            const previousResult = await validate(previous.command);
+            if (previousResult?.state !== "needs_login") throw new Error("adapter_probe_failed");
+          } else if (result?.state !== "available" && !(result?.state === "needs_login" && !previous)) {
+            throw new Error(result?.detail || result?.state || "adapter_probe_failed");
+          }
+          updateStage = "activate";
+          await rm(target, { recursive: true, force: true });
+          await rename(stage, target);
+          await save(id, release.version);
+          return { updated: true, version: release.version, adapter: result };
+        } catch (error) {
+          await rm(stage, { recursive: true, force: true });
+          throw error;
         }
-        // Inspect the staged command before making it visible to future sessions.
-        const stagedFile = release.kind === "npm"
-          ? path.join(stage, "node_modules", ...(id === "codex" ? ["@agentclientprotocol", "codex-acp"] : ["pi-acp"]), "dist", "index.js")
-          : path.join(stage, platform === "win32" ? "agy_acp_server.exe" : "agy_acp_server.par");
-        if (!existsSync(stagedFile)) throw new Error("adapter_install_failed");
-        const stagedCommand = release.kind === "npm"
-          ? { command: executablePath, args: [stagedFile], env: { ELECTRON_RUN_AS_NODE: "1" } }
-          : { command: stagedFile, args: antigravityArgs(platform) };
-        const result = await validate(stagedCommand);
-        if (result?.state === "needs_login" && previous) {
-          const previousResult = await validate(previous.command);
-          if (previousResult?.state !== "needs_login") throw new Error("adapter_probe_failed");
-        } else if (result?.state !== "available" && !(result?.state === "needs_login" && !previous)) {
-          throw new Error(result?.detail || result?.state || "adapter_probe_failed");
-        }
-        await rm(target, { recursive: true, force: true });
-        await rename(stage, target);
-        await save(id, release.version);
-        return { updated: true, version: release.version, adapter: result };
       } catch (error) {
-        await rm(stage, { recursive: true, force: true });
+        error.updateStage = updateStage;
         throw error;
       }
     })();
@@ -269,20 +287,20 @@ export function createAcpAdapterManager({ root, fetchImpl = fetch, platform = pr
   };
 
   const prune = async () => {
-    for (const id of ["codex", "antigravity", "piAgent"]) {
+    for (const id of MANAGED_IDS) {
       const current = get(id)?.version;
-      if (!current) continue;
       const folder = path.join(root, id);
       const names = await readdir(folder).catch(() => []);
-      const versions = names.filter((name) => VERSION_PATTERN.test(name) && name !== current)
+      const versions = names.filter((name) => VERSION_PATTERN.test(name) && (!current || name !== current))
         .sort((a, b) => compareVersions(b, a));
       for (const name of names) {
-        if (name.startsWith(".stage-") || (versions.includes(name) && name !== versions[0])) {
+        if (name.startsWith(".stage-") || (current && versions.includes(name) && name !== versions[0])) {
           await rm(path.join(folder, name), { recursive: true, force: true });
         }
       }
     }
   };
 
-  return { get, install, prune, installedIds: () => ["codex", "antigravity", "piAgent"].filter((id) => get(id)) };
+
+  return { get, install, prune, installedIds: () => MANAGED_IDS.filter((id) => get(id)) };
 }

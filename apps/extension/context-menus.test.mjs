@@ -1,4 +1,5 @@
 import { expect, test } from "bun:test";
+import { VIDEO_DOCUMENT_PATTERNS } from "./src/video/patterns.ts";
 
 test("registers context menus on install, not on background startup", async () => {
   const installedListeners = [];
@@ -43,6 +44,16 @@ test("registers context menus on install, not on background startup", async () =
       "save-zhihu",
       "save-reddit",
       "save-reddit-link",
+      "save-video",
+      "save-hacker-news",
+      "save-v2ex",
+      "save-xiaoyuzhou",
+      "save-facebook",
+      "save-instagram",
+      "save-linkedin",
+      "save-threads",
+      "save-bluesky",
+      "save-substack-note",
     ]);
     expect(created.find((item) => item.id === "save-xhs")).toMatchObject({
       contexts: ["page", "video"],
@@ -77,6 +88,28 @@ test("registers context menus on install, not on background startup", async () =
         "https://sh.reddit.com/*/comments/*",
       ],
     });
+    expect(created.find((item) => item.id === "save-selection")?.contexts).toEqual(["selection"]);
+    expect(created.find((item) => item.id === "save-image")?.contexts).toEqual(["image"]);
+    for (const id of ["save-hacker-news", "save-v2ex", "save-xiaoyuzhou"]) {
+      expect(created.find((item) => item.id === id)?.contexts).toEqual(["page"]);
+    }
+    expect(created.find((item) => item.id === "save-hacker-news")?.documentUrlPatterns).toEqual(["https://news.ycombinator.com/item?*"]);
+    expect(created.find((item) => item.id === "save-v2ex")?.documentUrlPatterns).toEqual(["https://www.v2ex.com/t/*", "https://v2ex.com/t/*"]);
+    expect(created.find((item) => item.id === "save-xiaoyuzhou")?.documentUrlPatterns).toEqual(["https://www.xiaoyuzhoufm.com/episode/*"]);
+    const video = created.find((item) => item.id === "save-video");
+    expect(video).toMatchObject({
+      contexts: ["page", "video"],
+      documentUrlPatterns: VIDEO_DOCUMENT_PATTERNS,
+    });
+    const hostOf = (pattern) => /^[a-z]+:\/\/([^/*]+)/i.exec(pattern)?.[1] ?? "*";
+    const videoHosts = new Set(VIDEO_DOCUMENT_PATTERNS.map(hostOf));
+    for (const item of created) {
+      if (item.id === "save-video") continue;
+      if (!(item.contexts ?? []).some((context) => context === "page" || context === "video")) continue;
+      for (const pattern of item.documentUrlPatterns ?? []) {
+        expect(videoHosts.has(hostOf(pattern))).toBe(false);
+      }
+    }
   } finally {
     globalThis.chrome = previousChrome;
   }
