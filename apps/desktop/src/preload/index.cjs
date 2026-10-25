@@ -32,6 +32,8 @@ contextBridge.exposeInMainWorld("edgeeverDesktop", Object.freeze({
   systemInfo: () => ipcRenderer.invoke("desktop:system-info"),
   globalShortcut: () => ipcRenderer.invoke("desktop:global-shortcut"),
   setGlobalShortcut: (binding) => ipcRenderer.invoke("desktop:set-global-shortcut", binding),
+  loginItem: () => ipcRenderer.invoke("desktop:login-item"),
+  setLoginItem: (patch) => ipcRenderer.invoke("desktop:set-login-item", patch),
   captureGlobalShortcut: (capturing) => ipcRenderer.invoke("desktop:capture-global-shortcut", capturing),
   setAccountScope: (accountId) => ipcRenderer.invoke("desktop:set-account-scope", accountId),
   apiBaseUrl: ipcRenderer.sendSync("desktop:api-base-url-sync"),
@@ -40,9 +42,19 @@ contextBridge.exposeInMainWorld("edgeeverDesktop", Object.freeze({
   copyText: (value) => ipcRenderer.invoke("desktop:copy-text", value),
   copyHtml: (html, plainText) => ipcRenderer.invoke("desktop:copy-html", { html, plainText }),
   copyImage: (bytes) => ipcRenderer.invoke("desktop:copy-image", bytes),
+  readClipboard: () => {
+    // Check in the isolated preload world; renderer JavaScript cannot forge this
+    // gesture state. Clipboard reads are reserved for an explicit paste action.
+    if (!navigator.userActivation?.isActive) return Promise.reject(new Error("Clipboard read requires user activation"));
+    return ipcRenderer.invoke("desktop:read-clipboard").then((snapshot) => ({
+      html: snapshot.html,
+      text: snapshot.text,
+      images: snapshot.images.map(normalizeIpcBytes),
+    }));
+  },
   setSessionToken: (value) => ipcRenderer.invoke("desktop:set-session-token", value),
   clearSessionToken: () => ipcRenderer.invoke("desktop:clear-session-token"),
-  testPicGoConnection: (endpoint) => ipcRenderer.invoke("desktop:picgo-test", endpoint),
+  testPicGoConnection: (input) => ipcRenderer.invoke("desktop:picgo-test", input),
   uploadPicGoImage: (input) => ipcRenderer.invoke("desktop:picgo-upload", input),
   publicNetworkFetch: (requestId, input) => ipcRenderer.invoke("desktop:public-network-fetch", requestId, input),
   cancelPublicNetworkFetch: async (requestId) => { ipcRenderer.send("desktop:cancel-public-network-fetch", requestId); },
@@ -58,6 +70,7 @@ contextBridge.exposeInMainWorld("edgeeverDesktop", Object.freeze({
   probeAcpAdapter: (input) => ipcRenderer.invoke("desktop:acp-probe", input),
   installAcpAdapter: (id) => ipcRenderer.invoke("desktop:acp-install", id),
   authenticateAcpAdapter: (input) => ipcRenderer.invoke("desktop:acp-authenticate", input),
+  prepareAcp: (input) => ipcRenderer.invoke("desktop:acp-prepare", input),
   promptAcp: (input) => ipcRenderer.invoke("desktop:acp-prompt", input),
   cancelAcp: (requestId) => ipcRenderer.invoke("desktop:acp-cancel", requestId),
   onAcpEvent: (callback) => {
@@ -95,6 +108,14 @@ contextBridge.exposeInMainWorld("edgeeverDesktop", Object.freeze({
     const listener = (_event, command) => callback(command);
     ipcRenderer.on("desktop:command", listener);
     return () => ipcRenderer.removeListener("desktop:command", listener);
+  },
+  setRichTextHeadingShortcutActive: (active) => {
+    ipcRenderer.sendSync("desktop:rich-text-heading-shortcut", active === true);
+  },
+  onHeadingShortcut: (callback) => {
+    const listener = (_event, level) => callback(level);
+    ipcRenderer.on("desktop:heading-shortcut", listener);
+    return () => ipcRenderer.removeListener("desktop:heading-shortcut", listener);
   },
   onHibernatePrepare: (callback) => {
     const listener = async () => {

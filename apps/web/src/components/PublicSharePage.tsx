@@ -1,10 +1,10 @@
 import "katex/dist/katex.min.css";
 import { Node, mergeAttributes } from "@tiptap/core";
 import Image from "@tiptap/extension-image";
-import { EditorContent, useEditor } from "@tiptap/react";
+import { EditorContent, useEditor, ReactNodeViewRenderer } from "@tiptap/react";
 import { useMutation, useQuery } from "@tanstack/react-query";
 import { Clock3, FileText, LoaderCircle, LockKeyhole, ShieldCheck } from "lucide-react";
-import { lazy, Suspense, useEffect, useMemo, useState, type CSSProperties, type FormEvent, type MouseEvent } from "react";
+import { lazy, Suspense, useContext, useEffect, useMemo, useRef, useState, type CSSProperties, type FormEvent, type MouseEvent } from "react";
 import { useTranslation } from "react-i18next";
 import { useParams } from "react-router";
 import { cn } from "@/lib/utils";
@@ -24,11 +24,18 @@ import {
   resolveNoteProse,
   type PublicMemoShare,
   type ShareBodyAccess,
+  getMemoDisplayTitle,
 } from "@edgeever/shared";
+import { resolveSupportedLocale } from "@edgeever/shared/i18n/locales";
+import { activateHeadingAnchorClick } from "@/lib/editor-heading-anchor";
 import { applyEditorBodyFontPreference } from "@/lib/editor-body-font";
 import { createEdgeEverMathematics } from "@edgeever/shared/mathematics";
 import { PdfAttachment } from "@/components/editor/PdfAttachment";
 import { FileAttachment } from "@/components/editor/FileAttachment";
+import { NotebookSiteCodeBlock } from "./NotebookSiteCodeBlock";
+import { NotebookSiteArticleTools } from "./NotebookSiteArticleTools";
+import { NotebookSiteSearchContext } from "./NotebookSiteSearch";
+import { useAppearanceTheme } from "./ThemeProvider";
 
 const ReadOnlyX6Diagram = lazy(() => import("@/components/ReadOnlyX6Diagram"));
 const ImageViewer = lazy(() => import("@/components/editor/ImageViewer").then((module) => ({ default: module.ImageViewer })));
@@ -83,9 +90,11 @@ const SharedThemeBlock = Node.create({
   },
 });
 
-const SharedRichText = ({ content }: { content: PublicMemoShare["contentJson"] }) => {
+const SiteCodeBlock = EdgeEverCodeBlock.extend({ addNodeView() { return ReactNodeViewRenderer(NotebookSiteCodeBlock); } });
+const SharedRichText = ({ content, site = false }: { content: PublicMemoShare["contentJson"]; site?: boolean }) => {
   const { t } = useTranslation();
   const [imagePreview, setImagePreview] = useState<{ alt: string; url: string } | null>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
   const editor = useEditor({
     extensions: [
       ...createEdgeEverDocumentExtensions({
@@ -96,7 +105,7 @@ const SharedRichText = ({ content }: { content: PublicMemoShare["contentJson"] }
         file: FileAttachment,
         table: { table: { renderWrapper: true } },
       }),
-      EdgeEverCodeBlock.configure({ lowlight: codeBlockLowlight, defaultLanguage: "plaintext" }),
+      (site ? SiteCodeBlock : EdgeEverCodeBlock).configure({ lowlight: codeBlockLowlight, defaultLanguage: "plaintext" }),
       SharedThemeBlock,
     ],
     content,
@@ -104,10 +113,17 @@ const SharedRichText = ({ content }: { content: PublicMemoShare["contentJson"] }
     editorProps: {
       attributes: {
         class: "prose prose-slate max-w-none focus:outline-none",
-        "aria-label": "Shared note content",
+        "aria-label": t("sharing.contentLabel"),
       },
     },
   }, [content]);
+  useEffect(() => {
+    if (!site || !editor) return;
+    containerRef.current?.querySelectorAll("img").forEach((img) => {
+      img.tabIndex = 0; img.setAttribute("role", "button");
+      img.setAttribute("aria-label", img.alt || t("editor.imageViewer"));
+    });
+  }, [editor, site, content, t]);
 
   const previewImage = (event: MouseEvent<HTMLDivElement>) => {
     const target = event.target;
@@ -116,8 +132,16 @@ const SharedRichText = ({ content }: { content: PublicMemoShare["contentJson"] }
     setImagePreview({ alt: target.alt, url: target.currentSrc });
   };
 
+  const jumpToHeading = (event: MouseEvent<HTMLDivElement>) => {
+    activateHeadingAnchorClick(event, editor && !editor.isDestroyed ? editor.view : null);
+  };
+
   return (
-    <div onDoubleClick={previewImage}>
+    <div ref={containerRef} onClickCapture={jumpToHeading} onClick={site ? previewImage : undefined} onDoubleClick={site ? undefined : previewImage} onKeyDown={site ? (event) => {
+      if ((event.key === "Enter" || event.key === " ") && event.target instanceof HTMLImageElement) {
+        event.preventDefault(); setImagePreview({ alt: event.target.alt, url: event.target.currentSrc });
+      }
+    } : undefined}>
       <EditorContent editor={editor} />
       {imagePreview ? (
         <Suspense fallback={null}>
@@ -142,12 +166,15 @@ const SharedDocument = ({
   share,
   token,
   access,
+  site = false,
 }: {
-  locale: "zh-CN" | "en-US" | "ja" | "pl";
+  locale: "zh-CN" | "en-US" | "ja" | "pl" | "ru";
   share: PublicMemoShare;
   token: string;
   access?: ShareBodyAccess;
+  site?: boolean;
 }) => {
+  const { resolvedTheme } = useAppearanceTheme();
   const body = useMemo(() => resolvePublicShareBody(share, token, access), [share, token, access]);
   if (body.type === "diagram") {
     return (
@@ -158,11 +185,11 @@ const SharedDocument = ({
           </div>
         }
       >
-        <ReadOnlyX6Diagram diagram={body.diagram} locale={locale} theme="light" />
+        <ReadOnlyX6Diagram diagram={body.diagram} locale={locale} theme={site ? resolvedTheme : "light"} controls={site} />
       </Suspense>
     );
   }
-  return <SharedRichText content={body.content} />;
+  return <SharedRichText content={body.content} site={site} />;
 };
 
 export const isSharePasswordError = (error: unknown, code: string) =>
@@ -220,7 +247,7 @@ export const PublicSharePasswordForm = ({
 };
 
 export const PublicSharePage = () => {
-  const { t, i18n } = useTranslation();
+  const { t } = useTranslation();
   const { token = "" } = useParams();
   const shareQuery = useQuery({
     queryKey: ["public-share", token],
@@ -239,7 +266,7 @@ export const PublicSharePage = () => {
     document.head.appendChild(robots);
     if (share) {
       document.title = withEnvironmentTitlePrefix(
-        `${share.title?.trim() || t("common.untitledMemo")} · EdgeEver`,
+        `${getMemoDisplayTitle(share.title, t("common.untitledMemo"))} · EdgeEver`,
         { development: import.meta.env.DEV, profile: __EDGEEVER_DEVELOPMENT_PROFILE__ },
       );
     } else if (passwordRequired) {
@@ -293,6 +320,8 @@ export const PublicShareArticle = ({
   layout?: "standalone" | "site";
 }) => {
   const { t, i18n } = useTranslation();
+  const containerRef = useRef<HTMLDivElement>(null);
+  const openSearch = useContext(NotebookSiteSearchContext);
   const publishedBodyFont = parsePublishedNoteBodyFont(share.bodyFont);
 
   useEffect(() => {
@@ -316,9 +345,10 @@ export const PublicShareArticle = ({
   const prose = resolveNoteProse(share.prose);
   return (
     <div
+      ref={containerRef}
       className={cn(
         "edgeever-public-share",
-        layout === "site" ? "py-6 sm:py-8" : "px-4 py-6 sm:px-8 sm:py-10",
+        layout === "site" ? "py-6 sm:py-8 xl:pr-56" : "px-4 py-6 sm:px-8 sm:py-10",
       )}
     >
       <article
@@ -364,7 +394,7 @@ export const PublicShareArticle = ({
               layout === "site" && "order-1",
             )}
           >
-            {share.title?.trim() || t("common.untitledMemo")}
+            {getMemoDisplayTitle(share.title, t("common.untitledMemo"))}
           </h1>
           {share.tags.length > 0 ? (
             <div
@@ -373,14 +403,15 @@ export const PublicShareArticle = ({
                 layout === "site" && "order-3",
               )}
             >
-              {share.tags.map((tag) => (
-                <span
+              {share.tags.map((tag) => layout === "site" ? (
+                <button type="button"
                   key={tag}
+                  onClick={() => openSearch(tag)}
                   className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600"
                 >
                   #{tag}
-                </span>
-              ))}
+                </button>
+              ) : <span key={tag} className="rounded-full bg-slate-100 px-2.5 py-1 text-xs text-slate-600">#{tag}</span>)}
             </div>
           ) : null}
         </header>
@@ -401,19 +432,15 @@ export const PublicShareArticle = ({
             />
           ) : null}
           <SharedDocument
-            locale={
-              (i18n.resolvedLanguage || i18n.language || "zh-CN").startsWith(
-                "en",
-              )
-                ? "en-US"
-                : "zh-CN"
-            }
+            locale={resolveSupportedLocale(i18n.resolvedLanguage || i18n.language)}
             share={share}
             token={token}
             access={access}
+            site={layout === "site"}
           />
         </div>
       </article>
+      {layout === "site" && <NotebookSiteArticleTools containerRef={containerRef} token={token} memoUrls={access?.memoUrls ?? {}} />}
     </div>
   );
 };

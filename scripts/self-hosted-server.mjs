@@ -5,6 +5,8 @@ import { fileURLToPath } from "node:url";
 import { hasBootstrapCredential } from "../apps/api/src/auth-bootstrap.ts";
 import { isUnauthenticatedAccessEnabled } from "../apps/api/src/auth-state.ts";
 import { fetchEdgeEverApp } from "../apps/api/src/index.ts";
+import { isNotebookSitePagePath, renderNotebookSitePage } from "../apps/api/src/notebook-site-page.ts";
+import { isPublicPagePath, PUBLIC_PAGE_HEADERS } from "../packages/shared/src/public-page-headers.ts";
 import { nodePublicFetch } from "../apps/api/src/node-public-network.ts";
 import { createSelfHostedStorageAdapter } from "../apps/api/src/self-hosted-storage-adapter.ts";
 import { resolveSelfHostedConfig } from "./self-hosted-config.mjs";
@@ -86,6 +88,9 @@ const env = {
   EDGE_EVER_CONTAINER_IMAGE: runtimeEnvironment.EDGE_EVER_CONTAINER_IMAGE,
   EDGE_EVER_DEPLOYMENT_TRIGGER: runtimeEnvironment.EDGE_EVER_DEPLOYMENT_TRIGGER,
   EDGE_EVER_DEPLOYMENT_METHOD: runtimeEnvironment.EDGE_EVER_DEPLOYMENT_METHOD,
+  EDGE_EVER_BUILD_CREATED_AT: runtimeEnvironment.EDGE_EVER_BUILD_CREATED_AT,
+  EDGE_EVER_BUILD_TRIGGER: runtimeEnvironment.EDGE_EVER_BUILD_TRIGGER,
+  EDGE_EVER_BUILD_METHOD: runtimeEnvironment.EDGE_EVER_BUILD_METHOD,
   EDGE_EVER_AUTH_PASSWORD: runtimeEnvironment.EDGE_EVER_AUTH_PASSWORD,
   EDGE_EVER_AUTH_PASSWORD_HASH: runtimeEnvironment.EDGE_EVER_AUTH_PASSWORD_HASH,
   EDGE_EVER_AUTH_PASSWORD_FALLBACK: runtimeEnvironment.EDGE_EVER_AUTH_PASSWORD_FALLBACK,
@@ -140,7 +145,13 @@ const serveStatic = async (request) => {
 
   const index = Bun.file(join(webDirectory, "index.html"));
   return (await index.exists())
-    ? new Response(index, { headers: { "Content-Type": "text/html; charset=utf-8" } })
+    ? new Response(index, {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          // Share and form links render the app shell; keep them out of search indexes and caches.
+          ...(isPublicPagePath(url.pathname) ? PUBLIC_PAGE_HEADERS : {}),
+        },
+      })
     : new Response("Web build not found. Run bun run build:web first.", { status: 503 });
 };
 
@@ -152,6 +163,10 @@ const server = Bun.serve({
   idleTimeout: config.idleTimeout,
   async fetch(request) {
     const pathname = new URL(request.url).pathname;
+    if (isNotebookSitePagePath(pathname)) {
+      return renderNotebookSitePage(request, storage.db,
+        () => serveStatic(new Request(new URL("/index.html", request.url))));
+    }
     if (pathname.startsWith("/api/") || pathname === "/mcp" || pathname.startsWith("/mcp/")) {
       return fetchEdgeEverApp(request, env, executionContext);
     }

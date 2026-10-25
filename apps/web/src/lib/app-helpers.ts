@@ -1,10 +1,9 @@
-import type { MemoSummary, Notebook, TiptapDoc } from "@edgeever/shared";
+import type { MemoSummary, Notebook } from "@edgeever/shared";
 import { DEFAULT_MEMO_TITLE } from "@edgeever/shared";
 import { getMobileNotebookSearchVisibleIds } from "@edgeever/shared/mobile-ui";
 import type { MemoFilterMode, MemoSortMode } from "@edgeever/client";
 import { buildNotebookTree, type NotebookNode, type NotebookNodeComparator } from "./utils";
 import * as React from "react";
-import type { ReactNode } from "react";
 import type { TFunction } from "i18next";
 
 export type Pane = "notebooks" | "memos" | "editor";
@@ -170,6 +169,7 @@ export const getMemoSortOptions = (t: TFunction): Array<{ value: MemoSortMode; l
   { value: "updated-desc", label: t("options.memoSort.updatedDesc") },
   { value: "created-desc", label: t("options.memoSort.createdDesc") },
   { value: "title-asc", label: t("options.memoSort.titleAsc") },
+  { value: "title-desc", label: t("options.memoSort.titleDesc") },
 ];
 
 const NOTEBOOK_SORT_VALUES: NotebookSortMode[] = ["custom", "name-asc", "memo-count-desc", "updated-desc"];
@@ -708,14 +708,14 @@ export const sortMemos = (memos: MemoSummary[], sortMode: MemoSortMode, prioriti
       return first.isPinned ? -1 : 1;
     }
 
-    if (sortMode === "title-asc") {
+    if (sortMode === "title-asc" || sortMode === "title-desc") {
       const titleCompare = getMemoTitle(first.title).localeCompare(getMemoTitle(second.title), "zh-CN", {
         numeric: true,
         sensitivity: "base",
       });
 
       if (titleCompare !== 0) {
-        return titleCompare;
+        return sortMode === "title-desc" ? -titleCompare : titleCompare;
       }
 
       return compareDateDesc(first.updatedAt, second.updatedAt);

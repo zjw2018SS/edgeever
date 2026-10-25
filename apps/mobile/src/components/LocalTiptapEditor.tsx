@@ -1,5 +1,7 @@
 'use dom';
 
+import { prepareNoteImageAssets } from "@edgeever/shared/note-image-fonts";
+import { noteImageAssetUrls } from "./note-image-asset-urls";
 import "katex/dist/katex.min.css";
 import { attachMobileReaderScroll } from "../lib/mobile-reader-scroll";
 import { Graph } from "@antv/x6";
@@ -29,6 +31,7 @@ import {
   markdownToDoc,
   MEMO_CONTENT_STYLE,
   createEdgeEverDocumentExtensions,
+  applyImageAlignment,
   DETAILS_EDITOR_CSS,
   wrapDetailsContentHtml,
   NativeAttachmentMetadata,
@@ -86,6 +89,7 @@ import {
   buildImageExportBasename,
   buildNoteImageCardMarkup,
   generateCardCss,
+  prepareNoteImageContent,
 } from "@edgeever/shared/note-image-card";
 import { useDOMImperativeHandle, type DOMImperativeFactory, type DOMProps } from "expo/dom";
 import { toCanvas } from "html-to-image";
@@ -146,7 +150,7 @@ type LocalTiptapEditorSharedProps = {
   onReaderScroll?: (collapsed: boolean) => Promise<void>;
   onImageExportEvent?: (payloadJson: string) => Promise<void>;
   ref: Ref<LocalTiptapEditorRef>;
-  locale: "zh-CN" | "en-US" | "ja" | "pl";
+  locale: "zh-CN" | "en-US" | "ja" | "pl" | "ru";
   theme: "light" | "dark";
   /** Live-switchable. The same DomWebView stays mounted across viewer → editor. */
   mode?: "editor" | "viewer";
@@ -449,7 +453,7 @@ const ReadOnlyX6Diagram = ({
   theme,
 }: {
   diagram: DiagramDocument;
-  locale: "zh-CN" | "en-US" | "ja" | "pl";
+  locale: "zh-CN" | "en-US" | "ja" | "pl" | "ru";
   theme: "light" | "dark";
 }) => {
   const containerRef = useRef<HTMLDivElement>(null);
@@ -1246,8 +1250,9 @@ function LocalTiptapEditorImpl(props: LocalTiptapEditorProps) {
 
     const notify = (payload: Record<string, unknown>) =>
       onImageExportEventRef.current?.(JSON.stringify({ requestId: request.requestId, ...payload }));
+    const exportStartedAt = performance.now();
     const reportProgress = (stage: "prepare" | "render" | "transfer") => {
-      void Promise.resolve(notify({ type: "progress", stage })).catch(() => {});
+      void Promise.resolve(notify({ type: "progress", stage, elapsedMs: Math.round(performance.now() - exportStartedAt) })).catch(() => {});
     };
     const missingImagePlaceholder = "data:image/gif;base64,R0lGODlhAQABAAD/ACwAAAAAAQABAAACADs=";
 
@@ -1267,6 +1272,7 @@ function LocalTiptapEditorImpl(props: LocalTiptapEditorProps) {
         if (element instanceof HTMLButtonElement) element.remove();
       });
 
+      prepareNoteImageContent(editorClone);
       const bodyHtml = editorClone.innerHTML;
 
       const host = document.createElement("div");
@@ -1282,7 +1288,7 @@ function LocalTiptapEditorImpl(props: LocalTiptapEditorProps) {
         bodyHtml,
         theme: resolvedTheme,
         fontStyle,
-        showTitle: request.showTitle ?? true,
+        showTitle: request.showTitle ?? false,
         showNotebook: request.showNotebook ?? false,
         showTags: request.showTags ?? false,
         showUpdatedAt: request.showUpdatedAt ?? true,
@@ -1299,6 +1305,11 @@ function LocalTiptapEditorImpl(props: LocalTiptapEditorProps) {
       document.body.appendChild(host);
 
       try {
+        await notify({ type: "font-status", status: "loading" });
+        const assets = await prepareNoteImageAssets({ theme: resolvedTheme, fontStyle, text: [request.title, request.notebook, ...(request.tags || []), request.updatedAt, bodyHtml].join(" "), urls: noteImageAssetUrls });
+        await notify({ type: "font-status", status: assets.fontFallback ? "fallback" : "ready" });
+        void assets.fontsReady?.then(() => notify({ type: "fonts-ready" }), () => {}).catch(() => {});
+        style.textContent = assets.css + generateCardCss({ theme: resolvedTheme, fontStyle, fontSize, cardWidth });
         const images = Array.from(documentRoot.querySelectorAll<HTMLImageElement>("img"));
         await Promise.race([
           Promise.all([
@@ -1344,7 +1355,7 @@ function LocalTiptapEditorImpl(props: LocalTiptapEditorProps) {
             }
           },
           pixelRatio: renderPlan.pixelRatio,
-          skipFonts: true,
+          fontEmbedCSS: assets.fontCss,
           width,
         });
         let canvas: HTMLCanvasElement;
@@ -1389,6 +1400,7 @@ function LocalTiptapEditorImpl(props: LocalTiptapEditorProps) {
         }
         await notify({
           type: "complete",
+          fontFallback: assets.fontFallback,
           filename,
           mimeType,
           width: canvas.width,
@@ -1718,9 +1730,9 @@ function LocalTiptapEditorImpl(props: LocalTiptapEditorProps) {
                 disabled={(action.id === "undo" && ((historyState ?? 0) & 1) === 0)
                   || (action.id === "redo" && ((historyState ?? 0) & 2) === 0)
                   || (action.id === "increaseListIndent"
-                    && !Boolean(editor?.can().chain().focus().sinkListItem(activeListItemType).run()))
+                    && !editor?.can().chain().focus().sinkListItem(activeListItemType).run())
                   || (action.id === "decreaseListIndent"
-                    && !Boolean(editor?.can().chain().focus().liftListItem(activeListItemType).run()))}
+                    && !editor?.can().chain().focus().liftListItem(activeListItemType).run())}
                 icon={toolbarIcons[action.id]}
                 label={getMobileEditorToolbarActionLabel(action.id, props.locale)}
                 onRun={toolbarHandlers[action.id]}
@@ -1816,7 +1828,7 @@ const MobileSelectionAiPanel = ({
   panel,
   prompts,
 }: {
-  locale: "zh-CN" | "en-US" | "ja" | "pl";
+  locale: "zh-CN" | "en-US" | "ja" | "pl" | "ru";
   onApply: (mode: "append" | "replace") => void;
   onChange: Dispatch<SetStateAction<MobileAiPanelState | null>>;
   onClose: () => void;
@@ -2288,6 +2300,7 @@ const applyImageWidth = (
   const width = parseImageWidth(attributes.width) ?? NEW_IMAGE_WIDTH_PERCENT;
   element.style.width = `${width}%`;
   element.dataset.width = String(width);
+  applyImageAlignment(element, attributes.alignment);
   return width;
 };
 
@@ -2328,7 +2341,7 @@ const loadMermaid = () => {
 };
 
 const createMobileCodeBlockExtension = (
-  locale: "zh-CN" | "en-US" | "ja" | "pl",
+  locale: "zh-CN" | "en-US" | "ja" | "pl" | "ru",
   theme: "light" | "dark",
   hideCopyForVisualDiagram = false,
 ) => CodeBlock.extend({
@@ -2504,7 +2517,7 @@ const createMobileCodeBlockExtension = (
 });
 
 const createMobileImageSizeControls = (
-  locale: "zh-CN" | "en-US" | "ja" | "pl",
+  locale: "zh-CN" | "en-US" | "ja" | "pl" | "ru",
   updateWidth: (width: number) => void
 ) => {
   const controls = document.createElement("div");
@@ -2556,7 +2569,7 @@ const createMobileImageSizeControls = (
 
 const createProtectedImageExtension = (
   baseUrl: string,
-  locale: "zh-CN" | "en-US" | "ja" | "pl",
+  locale: "zh-CN" | "en-US" | "ja" | "pl" | "ru",
   loadResource: (source: string) => Promise<string | null>,
   options?: {
     readOnly?: boolean | (() => boolean);
@@ -3247,7 +3260,7 @@ const getEditorStyles = (theme: "light" | "dark", options?: { viewer?: boolean }
   .edgeever-editor-content ul[data-type="taskList"] ul[data-type="taskList"] { margin: 4px 0 0; padding-left: 24px; }
   .edgeever-editor-content blockquote { margin-left: 0; margin-right: 0; max-width: 100%; padding: 6px 12px; border-left: 3px solid ${theme === "dark" ? "#475569" : "#cbd5e1"}; border-radius: 1px 4px 4px 1px; background: ${theme === "dark" ? "rgba(255, 255, 255, 0.05)" : "#f3f5f7"}; color: ${theme === "dark" ? "#f8fafc" : "#3d4450"}; }
   .edgeever-editor-content pre { max-width: 100%; overflow-x: auto; border-radius: 8px; border: 1px solid ${theme === "dark" ? "#334155" : "#e2e8f0"}; padding: 12px 90px 12px 14px; background: ${theme === "dark" ? "#1e293b" : "#f8fafc"}; color: ${theme === "dark" ? "#e2e8f0" : "#0f172a"}; font-size: 0.88rem; box-shadow: 0 1px 2px ${theme === "dark" ? "rgba(0, 0, 0, 0.2)" : "rgba(15, 23, 42, 0.03)"}; }
-  .edgeever-editor-content code { border-radius: 4px; padding: 2px 5px; border: 1px solid ${theme === "dark" ? "rgba(255, 255, 255, 0.12)" : "#e1e5ea"}; background: ${theme === "dark" ? "rgba(255, 255, 255, 0.06)" : "#f3f5f7"}; color: ${theme === "dark" ? "#f8fafc" : "#3d4450"}; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; font-weight: 550; }
+  .edgeever-editor-content code { border-radius: 4px; padding: 2px 5px; border: 1px solid ${theme === "dark" ? "rgba(255, 255, 255, 0.12)" : "#e1e5ea"}; background: ${theme === "dark" ? "rgba(255, 255, 255, 0.06)" : "#f3f5f7"}; color: ${theme === "dark" ? "#f8fafc" : "#3d4450"}; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 0.88em; font-weight: 400; }
   .edgeever-editor-content pre code { padding: 0; border: 0; background: transparent; font-size: inherit; font-weight: normal; color: inherit; }
   .edgeever-editor-content .tiptap-mathematics-render[data-type="block-math"] { max-width: 100%; margin: 16px 0; overflow-x: auto; overflow-y: hidden; padding: 4px 0; text-align: center; -webkit-overflow-scrolling: touch; }
   .edgeever-editor-content .inline-math-error, .edgeever-editor-content .block-math-error { color: ${theme === "dark" ? "#fda4af" : "#be123c"}; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
