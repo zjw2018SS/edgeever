@@ -1,7 +1,6 @@
 import hljs from "highlight.js/lib/common";
-import { renderMermaidSVG, THEMES } from "beautiful-mermaid";
 import { MERMAID_THEME_PALETTES } from "@/components/ThemeProvider";
-import { scaleMermaidSvg } from "@/lib/mermaid-svg";
+import { renderThemedMermaidSvg } from "@/lib/mermaid-renderer";
 
 const WINDOWS_RESERVED_NAME = /^(con|prn|aux|nul|com[1-9]|lpt[1-9])(?:\.|$)/i;
 const EXPORT_FONT_FAMILY =
@@ -178,7 +177,10 @@ const resolveResourceUrl = (src: string) => {
   }
 };
 
-export const renderMermaidBlocksForHtmlExport = async (root: HTMLElement) => {
+export const renderMermaidBlocksForHtmlExport = async (
+  root: HTMLElement,
+  renderSvg = renderThemedMermaidSvg,
+) => {
   const blocks = Array.from(root.querySelectorAll<HTMLElement>("pre > code.language-mermaid"));
   await Promise.all(blocks.map(async (code) => {
     const source = code.textContent?.trim();
@@ -188,13 +190,11 @@ export const renderMermaidBlocksForHtmlExport = async (root: HTMLElement) => {
     }
 
     try {
-      const svg = scaleMermaidSvg(renderMermaidSVG(source, {
-        ...THEMES["zinc-light"],
-        ...MERMAID_THEME_PALETTES["zinc-light"],
-        transparent: true,
+      const svg = await renderSvg(source, {
+        palette: MERMAID_THEME_PALETTES["zinc-light"],
         font: EXPORT_FONT_FAMILY,
         padding: 24,
-      }));
+      });
       const figure = document.createElement("figure");
       figure.className = "edgeever-html-mermaid";
       figure.innerHTML = svg;

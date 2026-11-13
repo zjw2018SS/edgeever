@@ -12,21 +12,9 @@ import {
   mindMapConnector,
   type DiagramDocument,
 } from "@edgeever/shared";
+import type { SupportedLocale } from "@edgeever/shared/i18n/locales";
 
 Graph.registerConnector(MIND_MAP_CONNECTOR_NAME, mindMapConnector, true);
-
-const diagramTitle = (diagram: DiagramDocument, locale: "zh-CN" | "en-US" | "ja" | "pl" | "ru") => {
-  if (locale === "en-US") {
-    return diagram.kind === "mind-map" ? "Mind map" : diagram.kind === "architecture" ? "Architecture diagram" : "Flowchart";
-  }
-  if (locale === "pl") {
-    return diagram.kind === "mind-map" ? "Mapa myśli" : diagram.kind === "architecture" ? "Diagram architektury" : "Schemat blokowy";
-  }
-  if (locale === "ru") {
-    return diagram.kind === "mind-map" ? "Ментальная карта" : diagram.kind === "architecture" ? "Схема архитектуры" : "Блок-схема";
-  }
-  return diagram.kind === "mind-map" ? "思维导图" : diagram.kind === "architecture" ? "架构图" : "流程图";
-};
 
 export const ReadOnlyX6Diagram = ({
   diagram,
@@ -35,7 +23,7 @@ export const ReadOnlyX6Diagram = ({
   controls = false,
 }: {
   diagram: DiagramDocument;
-  locale: "zh-CN" | "en-US" | "ja" | "pl" | "ru";
+  locale: SupportedLocale;
   theme: "light" | "dark";
   controls?: boolean;
 }) => {
@@ -143,7 +131,7 @@ export const ReadOnlyX6Diagram = ({
         <ButtonTooltip title={t(fullscreen ? "notebookSite.exitFullscreen" : "notebookSite.fullscreen")}><Button variant="outline" size="sm" aria-pressed={fullscreen} onClick={() => setFullscreen((value) => !value)}>{t(fullscreen ? "notebookSite.exitFullscreen" : "notebookSite.fullscreen")}</Button></ButtonTooltip>
       </div>}
       <div
-        aria-label={diagramTitle(diagram, locale)}
+        aria-label={diagram.kind === "mind-map" ? t("diagram.mindMap") : diagram.kind === "architecture" ? t("diagram.architecture") : t("diagram.flowchart")}
         className="edgeever-x6-diagram"
         data-diagram-kind={diagram.kind}
         key={diagram.kind}

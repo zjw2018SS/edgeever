@@ -1,4 +1,4 @@
-import type { Notebook, NotebookCreateInput } from "@edgeever/shared";
+import type { Notebook, NotebookCreateInput, NotebookUpdateInput } from "@edgeever/shared";
 import type { AuditActor } from "./api-context";
 import { AppError } from "./app-error";
 import { auditStatement } from "./audit";
@@ -19,6 +19,11 @@ export type NotebookRow = {
   slug: string | null;
   icon: string | null;
   color: string | null;
+  text_color?: string | null;
+  color_target?: Notebook["colorTarget"];
+  is_bold?: number;
+  icon_inverted?: number;
+  row_inverted?: number;
   sort_order: number;
   memo_count: number | null;
   last_memo_updated_at: string | null;
@@ -33,6 +38,11 @@ export const mapNotebook = (row: NotebookRow): Notebook => ({
   slug: row.slug,
   icon: row.icon,
   color: row.color,
+  textColor: row.text_color ?? null,
+  colorTarget: row.color_target ?? "icon",
+  isBold: row.is_bold === 1,
+  iconInverted: row.icon_inverted === 1,
+  rowInverted: row.row_inverted === 1,
   sortOrder: row.sort_order,
   memoCount: row.memo_count ?? 0,
   lastMemoUpdatedAt: row.last_memo_updated_at,
@@ -47,6 +57,11 @@ export const notebookSelectSql = (tail: string) => `
          n.slug,
          n.icon,
          n.color,
+         n.text_color,
+         n.color_target,
+         n.is_bold,
+         n.icon_inverted,
+         n.row_inverted,
          n.sort_order,
          COUNT(m.id) AS memo_count,
          MAX(m.updated_at) AS last_memo_updated_at,
@@ -62,7 +77,7 @@ export const listNotebooks = async (db: DatabaseAdapter, workspaceId: string): P
     .prepare(
       notebookSelectSql(
         `WHERE n.workspace_id = ? AND n.is_deleted = 0
-         GROUP BY n.id, n.parent_id, n.name, n.slug, n.icon, n.color, n.sort_order, n.created_at, n.updated_at
+         GROUP BY n.id, n.parent_id, n.name, n.slug, n.icon, n.color, n.text_color, n.color_target, n.is_bold, n.icon_inverted, n.row_inverted, n.sort_order, n.created_at, n.updated_at
          ORDER BY n.parent_id IS NOT NULL, n.sort_order ASC, n.name ASC`
       )
     )
@@ -138,7 +153,7 @@ export const getNotebook = async (db: DatabaseAdapter, workspaceId: string, id: 
     .prepare(
       notebookSelectSql(
         `WHERE n.id = ? AND n.workspace_id = ? AND n.is_deleted = 0
-         GROUP BY n.id, n.parent_id, n.name, n.slug, n.icon, n.color, n.sort_order, n.created_at, n.updated_at`
+         GROUP BY n.id, n.parent_id, n.name, n.slug, n.icon, n.color, n.text_color, n.color_target, n.is_bold, n.icon_inverted, n.row_inverted, n.sort_order, n.created_at, n.updated_at`
       )
     )
     .bind(id, workspaceId)
@@ -146,6 +161,12 @@ export const getNotebook = async (db: DatabaseAdapter, workspaceId: string, id: 
 
   return row ? mapNotebook(row) : null;
 };
+
+/** Existence checks do not need the notebook's potentially large memo aggregate. */
+export const notebookExists = async (db: DatabaseAdapter, workspaceId: string, id: string): Promise<boolean> =>
+  Boolean(await db.prepare(
+    "SELECT id FROM notebooks WHERE id = ? AND workspace_id = ? AND is_deleted = 0",
+  ).bind(id, workspaceId).first<{ id: string }>());
 
 export const createNotebookRecord = async (
   db: DatabaseAdapter,
@@ -155,7 +176,7 @@ export const createNotebookRecord = async (
 ) => {
   const parentId = input.parentId ?? null;
 
-  if (parentId && !(await getNotebook(db, workspaceId, parentId))) {
+  if (parentId && !(await notebookExists(db, workspaceId, parentId))) {
     throw new AppError("not_found", "Parent notebook not found", 404);
   }
 
@@ -190,7 +211,7 @@ export const updateNotebookRecord = async (
   db: DatabaseAdapter,
   workspaceId: string,
   id: string,
-  input: { name?: string; parentId?: string | null; sortOrder?: number },
+  input: NotebookUpdateInput,
   actor: AuditActor
 ) => {
   const current = await getNotebook(db, workspaceId, id);
@@ -210,9 +231,7 @@ export const updateNotebookRecord = async (
   }
 
   if (nextParentId) {
-    const parent = await getNotebook(db, workspaceId, nextParentId);
-
-    if (!parent) {
+    if (!(await notebookExists(db, workspaceId, nextParentId))) {
       throw new AppError("not_found", "Parent notebook not found", 404);
     }
 
@@ -225,10 +244,14 @@ export const updateNotebookRecord = async (
     db
       .prepare(
         `UPDATE notebooks
-         SET name = ?, slug = ?, parent_id = ?, sort_order = ?, updated_at = ?
+         SET name = ?, slug = ?, parent_id = ?, sort_order = ?, icon = ?, color = ?, text_color = ?, color_target = ?, is_bold = ?, icon_inverted = ?, row_inverted = ?, updated_at = ?
          WHERE id = ? AND workspace_id = ? AND is_deleted = 0`
       )
-      .bind(nextName, nextSlug, nextParentId ?? null, nextSortOrder, now, id, workspaceId),
+      .bind(nextName, nextSlug, nextParentId ?? null, nextSortOrder,
+        input.icon === undefined ? current.icon : input.icon,
+        input.color === undefined ? current.color : input.color,
+        input.textColor === undefined ? current.textColor : input.textColor,
+        input.colorTarget ?? current.colorTarget ?? "icon", Number(input.isBold ?? current.isBold ?? false), Number(input.iconInverted ?? current.iconInverted ?? false), Number(input.rowInverted ?? current.rowInverted ?? false), now, id, workspaceId),
     auditStatement(db, actor.actorType, actor.actorId, "notebook.update", "notebook", id, input),
   ]);
 
@@ -272,16 +295,15 @@ const listActiveNotebookTree = async (db: DatabaseAdapter, workspaceId: string, 
   return rows.results;
 };
 
-const countActiveMemosInNotebooks = async (db: DatabaseAdapter, workspaceId: string, notebookIds: string[]) => {
-  let total = 0;
+const hasActiveMemosInNotebooks = async (db: DatabaseAdapter, workspaceId: string, notebookIds: string[]) => {
   for (const chunk of chunkValues(notebookIds, NOTEBOOK_DELETE_ID_CHUNK)) {
     const placeholders = chunk.map(() => "?").join(", ");
     const row = await db.prepare(
-      `SELECT COUNT(*) AS count FROM memos WHERE workspace_id = ? AND is_deleted = 0 AND notebook_id IN (${placeholders})`
-    ).bind(workspaceId, ...chunk).first<{ count: number }>();
-    total += Number(row?.count ?? 0);
+      `SELECT 1 AS found FROM memos WHERE workspace_id = ? AND is_deleted = 0 AND notebook_id IN (${placeholders}) LIMIT 1`
+    ).bind(workspaceId, ...chunk).first<{ found: number }>();
+    if (row) return true;
   }
-  return total;
+  return false;
 };
 
 export const deleteNotebookTree = async (
@@ -313,7 +335,7 @@ export const deleteNotebookTree = async (
   const notebookIds = tree.map((notebook) => notebook.id);
   // Empty child notebooks are removed with the parent. Notes anywhere in the
   // subtree block the whole delete so a parent click cannot orphan them.
-  if (await countActiveMemosInNotebooks(db, workspaceId, notebookIds) > 0) {
+  if (await hasActiveMemosInNotebooks(db, workspaceId, notebookIds)) {
     throw new AppError(
       "notebook_not_empty",
       "Move or delete notes in this notebook and its child notebooks before deleting it.",

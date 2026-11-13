@@ -1,9 +1,13 @@
 import {
   SUPPORTED_IMAGE_MIME_TYPES,
+  isPdfAttachment,
+  resolvePlayableMediaMimeType,
+  setSvgResourceSecurityHeaders,
   type Resource,
   type ResourceListItem,
   type ResourceStorageSummary,
 } from "@edgeever/shared";
+import { format as formatContentType, parse as parseContentType } from "content-type";
 import { auditStatement } from "./audit";
 import type { AppContext, AuditActor, Bindings } from "./api-context";
 import { AppError } from "./app-error";
@@ -103,6 +107,30 @@ export const validateImageUpload = (mimeType: string, size: number) => {
   if (size <= 0 || size > MAX_IMAGE_UPLOAD_BYTES) {
     throw new AppError("upload_too_large", "Image must be between 1 byte and 100 MiB.", 413);
   }
+};
+
+// HTTP field bytes: HTAB, visible ASCII and obs-text, never other controls or DEL.
+const HTTP_FIELD_VALUE_PATTERN = /^[\t\u0020-\u007e\u0080-\u00ff]*$/;
+
+const parseResourceContentType = (value: string) => {
+  if (!HTTP_FIELD_VALUE_PATTERN.test(value)) return null;
+  if (!value.trim()) return { type: "application/octet-stream", header: "application/octet-stream" };
+  try {
+    // A top-level comma ends the first type. Never silently accept the remainder.
+    const parsed = parseContentType(value, { comma: true });
+    if (parsed.index !== value.length) return null;
+    return { type: parsed.type, header: formatContentType(parsed) };
+  } catch {
+    return null;
+  }
+};
+
+export const validateRestoredResourceMimeType = (kind: Resource["kind"], mimeType: string, size: number) => {
+  const parsed = parseResourceContentType(mimeType);
+  if (!parsed) {
+    throw new AppError("unsupported_media_type", "Resource MIME type must contain a single valid media type.", 415);
+  }
+  if (kind === "image" && parsed.type !== "application/octet-stream") validateImageUpload(parsed.type, size);
 };
 
 export const deleteReleasedResourceObjects = async (
@@ -372,6 +400,7 @@ export const replaceResourceContent = async (
     resourceId: string;
     expectedContentHash: string;
     filename: string;
+    preserveFilename?: boolean;
     mimeType: string;
     bytes: Uint8Array;
     actor: AuditActor;
@@ -387,33 +416,39 @@ export const replaceResourceContent = async (
   if (current.kind === "image") validateImageUpload(input.mimeType, input.bytes.byteLength);
   else validateAttachmentUpload(input.bytes.byteLength);
 
-  const filename = normalizeFilename(input.filename) || current.filename || input.resourceId;
+  const filename = (input.preserveFilename ? current.filename : normalizeFilename(input.filename)) || current.filename || input.resourceId;
   const mimeType = input.mimeType || "application/octet-stream";
   const contentHash = await sha256Bytes(input.bytes);
   if (
     contentHash === current.sha256
-    && filename === current.filename
+    && (input.preserveFilename || filename === current.filename)
     && mimeType === current.mime_type
   ) return mapResource(current);
 
   const source = await resolveObjectStorage(context.env, current.storage_config_id);
-  const nextObjectKey = `${current.object_key}.version-${createId("blob")}`;
-  await source.store.put(nextObjectKey, input.bytes, {
-    httpMetadata: { contentType: mimeType, cacheControl: "private, max-age=3600" },
-    customMetadata: { memoId: current.memo_id, resourceId: current.id, filename },
-  });
-
-  const now = isoNow();
-  let pointerSwapped = false;
+  // Keep the directory, not the previous version suffix: repeated saves must
+  // not grow beyond filesystem/object-store key limits.
+  const objectDirectory = current.object_key.slice(0, current.object_key.lastIndexOf("/") + 1);
+  const nextObjectKey = `${objectDirectory}${current.id}.version-${createId("blob")}`;
+  let candidateMayBeLive = false;
   try {
+    await source.store.put(nextObjectKey, input.bytes, {
+      httpMetadata: { contentType: mimeType, cacheControl: "private, max-age=3600" },
+      customMetadata: { memoId: current.memo_id, resourceId: current.id, filename },
+    });
+    const now = isoNow();
+    // A failed database response does not prove that its write failed. Retain
+    // bytes once the pointer update is submitted unless it is confirmed unused.
+    candidateMayBeLive = true;
     await context.env.storage.db.prepare(
       `UPDATE resources
-       SET object_key = ?, mime_type = ?, filename = ?, byte_size = ?, sha256 = ?, width = NULL, height = NULL, updated_at = ?
+       SET object_key = ?, mime_type = ?, filename = COALESCE(?, filename), byte_size = ?, sha256 = ?, width = NULL, height = NULL, updated_at = ?
        WHERE id = ? AND sha256 = ? AND is_deleted = 0`,
     ).bind(
       nextObjectKey,
       mimeType,
-      filename,
+      // NULL preserves the value held by this UPDATE, not the earlier read.
+      input.preserveFilename ? null : filename,
       input.bytes.byteLength,
       contentHash,
       now,
@@ -423,9 +458,9 @@ export const replaceResourceContent = async (
 
     const updated = await getResourceRow(context.env.storage.db, workspaceId, current.id);
     if (!updated || updated.object_key !== nextObjectKey) {
+      candidateMayBeLive = false;
       throw new AppError("resource_conflict", "The resource changed while it was being saved.", 409);
     }
-    pointerSwapped = true;
 
     await auditStatement(
       context.env.storage.db,
@@ -445,7 +480,7 @@ export const replaceResourceContent = async (
     await source.store.delete(current.object_key).catch(() => undefined);
     return mapResource(updated);
   } catch (error) {
-    if (!pointerSwapped) await source.store.delete(nextObjectKey).catch(() => undefined);
+    if (!candidateMayBeLive) await source.store.delete(nextObjectKey).catch(() => undefined);
     throw error;
   }
 };
@@ -472,3 +507,31 @@ const contentDisposition = (kind: "inline" | "attachment", filename: string | nu
 export const contentDispositionInline = (filename: string | null) => contentDisposition("inline", filename);
 
 export const contentDispositionAttachment = (filename: string | null) => contentDisposition("attachment", filename);
+
+/** One policy for both the browser MIME and the decision to render it inline. */
+export const setResourceContentHeaders = (
+  headers: Headers,
+  resource: Pick<ResourceRow, "kind" | "mime_type" | "filename">,
+) => {
+  const sourceMimeType = resource.mime_type ?? headers.get("Content-Type") ?? "";
+  const parsed = parseResourceContentType(sourceMimeType);
+  let contentType = "application/octet-stream";
+  let inline = false;
+
+  // Invalid legacy metadata must not be rescued into a preview by its filename.
+  if (parsed) {
+    const pdf = isPdfAttachment(resource.mime_type, resource.filename);
+    const media = resolvePlayableMediaMimeType(resource.mime_type ? parsed.type : null, resource.filename);
+    if (pdf) contentType = "application/pdf";
+    else if (media) contentType = resource.mime_type && parsed.type === media ? parsed.header : media;
+    else contentType = parsed.header;
+
+    inline = pdf || Boolean(media)
+      || (resource.kind === "image" && SUPPORTED_IMAGE_MIME_TYPES.has(parsed.type));
+  }
+
+  headers.set("Content-Type", contentType);
+  headers.set("Content-Disposition", inline ? contentDispositionInline(resource.filename) : contentDispositionAttachment(resource.filename));
+  headers.set("X-Content-Type-Options", "nosniff");
+  setSvgResourceSecurityHeaders(headers);
+};

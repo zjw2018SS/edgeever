@@ -13,7 +13,7 @@ const REPOSITORY_WRANGLER_VALUES = {
   bucket_name: "edgeever-resources",
   preview_bucket_name: "edgeever-resources-preview",
 };
-const REPOSITORY_WRANGLER_SHA256 = "55b5f99e86f4d752c44560a6e392d8b52d782c8cdb0311faec9544e6cb883af7";
+const REPOSITORY_WRANGLER_SHA256 = "5d86ce3467cd0975e2c91cfefa26c214c369782ab92e85713f5afb9787b5c24e";
 
 const configValue = (config, key) => {
   const match = config.match(new RegExp(`^${key}\\s*=\\s*(?:"([^"]*)"|(true|false))`, "m"));
@@ -262,4 +262,10 @@ export const runWranglerSync = (args, options = {}) => {
   }
 
   return result;
+};
+
+/** Demo must reach application redirects even when a static asset exists. */
+export const configureDemoAssetRouting = (config, demoMode) => {
+  if (!demoMode) return config;
+  return config.replace(/(\[assets\][\s\S]*?^run_worker_first\s*=)[^\n]*/m, "$1 true");
 };

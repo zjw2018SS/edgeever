@@ -1,3 +1,6 @@
+import { servePublicDemoRequest } from "./public-demo-page";
+import { isEdgeEverAppPath } from "./app-paths";
+import { isDatabaseDailyQuotaError } from "./database-errors";
 import {
   createExcerpt,
   docToText,
@@ -5,6 +8,7 @@ import {
   normalizeTags,
 } from "@edgeever/shared";
 import { Hono } from "hono";
+import { registerImportContextGuard, registerImportRoutes } from "./import-routes";
 import { cors } from "hono/cors";
 import { resolveContainerImageSource } from "./container-image-source";
 import apiProbe from "../../../docs/openapi.json";
@@ -121,12 +125,14 @@ import {
 import { registerNotebookRoutes } from "./notebook-routes";
 import { registerNotebookShareRoutes, registerPublicNotebookShareRoutes } from "./notebook-share-routes";
 import { isNotebookSitePagePath, renderNotebookSitePage } from "./notebook-site-page";
+import { isPublicMemoSharePagePath, renderPublicMemoSharePage } from "./share-page";
 import { registerMemoShareRoutes, registerPublicShareRoutes } from "./share-routes";
 import { registerPublicTableFormRoutes, registerTableFormRoutes } from "./table-form-routes";
 import {
   deleteStoredObjects,
   getActiveObjectStorageConfig,
 } from "./object-storage";
+import { ensureWorkspaceExampleSeed } from "./workspace-example-seed";
 import {
   DEFAULT_WORKSPACE_ID,
   ensureUserWorkspace,
@@ -161,7 +167,7 @@ app.use(
   "/api/*",
   cors({
     origin: API_CORS_ORIGINS,
-    allowHeaders: ["Content-Type", "Authorization"],
+    allowHeaders: ["Content-Type", "Authorization", "x-edgeever-import-context"],
     allowMethods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
     credentials: true,
   })
@@ -305,19 +311,33 @@ app.use("/api/v1/*", async (c, next) => {
       workspaceId: DEFAULT_WORKSPACE_ID,
       role: "owner",
     });
+    await ensureWorkspaceExampleSeed(c.env, DEFAULT_WORKSPACE_ID).catch((error) => {
+      console.error("EdgeEver example seed failed", error);
+    });
     await next();
     return;
   }
 
-  const auth = await authenticateRequest(c, true);
+  const auth = await authenticateRequest(c, true, { allowMfaRestricted: true });
 
   if (!auth) {
     return unauthorized(c, "Authentication required.");
   }
 
+  if (auth.mfaRestricted) {
+    return apiError(
+      c,
+      "mfa_rebind_required",
+      "Bind a new authenticator to finish signing in with a recovery code.",
+      403,
+    );
+  }
+
   c.set("auth", auth);
   await next();
 });
+
+registerImportContextGuard(app);
 
 registerObjectStorageRoutes(app, {
   isDemoMode: (...args) => isDemoMode(...args),
@@ -342,6 +362,7 @@ registerSyncRoutes(app, {
   clampNumber: (...args) => clampNumber(...args),
   mapMemoDetail: (...args) => mapMemoDetail(...args),
 });
+registerImportRoutes(app);
 registerTagRoutes(app);
 registerPosterRenderRoutes(app);
 registerPluginDistributionRoutes(app);
@@ -455,17 +476,32 @@ export const fetchEdgeEverApp = async (
 
 const worker = {
   async fetch(request: Request, env: WorkerBindings, ctx: ExecutionContext) {
-    if (isNotebookSitePagePath(new URL(request.url).pathname)) {
-      return (await renderNotebookSitePage(request, createCloudflareStorageAdapter(env).db,
-        () => env.ASSETS.fetch(new Request(new URL("/", request.url), { method: "GET" }))))!;
-    }
-    return fetchEdgeEverApp(request, {
-      ...env,
-      storage: createCloudflareStorageAdapter(env),
-      deploymentVersionCreatedAt: env.CF_VERSION_METADATA?.timestamp,
-      // workerd's default Internet egress checks resolved addresses against its public-only network policy.
-      publicNetworkFetch: (url, init) => fetch(url, init),
-    }, ctx);
+    return servePublicDemoRequest(request, async () => {
+      const { pathname } = new URL(request.url);
+      const loadAppShell = () => env.ASSETS.fetch(new Request(new URL("/", request.url), { method: "GET" }));
+      if (isNotebookSitePagePath(pathname)) {
+        return (await renderNotebookSitePage(request, createCloudflareStorageAdapter(env).db, loadAppShell))!;
+      }
+      // `/share/*` runs the worker first. Unknown share paths still fall through
+      // to the asset shell so a typo does not become a JSON 404.
+      if (pathname.startsWith("/share/")) {
+        if (isPublicMemoSharePagePath(pathname)) {
+          const page = await renderPublicMemoSharePage(request, createCloudflareStorageAdapter(env).db, loadAppShell);
+          if (page) return page;
+        }
+        return env.ASSETS.fetch(request);
+      }
+      if (!isEdgeEverAppPath(pathname) && pathname !== "/__scheduled") {
+        return env.ASSETS.fetch(request);
+      }
+      return fetchEdgeEverApp(request, {
+        ...env,
+        storage: createCloudflareStorageAdapter(env),
+        deploymentVersionCreatedAt: env.CF_VERSION_METADATA?.timestamp,
+        // workerd's default Internet egress checks resolved addresses against its public-only network policy.
+        publicNetworkFetch: (url, init) => fetch(url, init),
+      }, ctx);
+    });
   },
   async scheduled(controller: ScheduledController, env: WorkerBindings, ctx: ExecutionContext) {
     const runtimeEnv = {
@@ -500,6 +536,12 @@ app.onError((error, c) => {
 
   const requestError = httpExceptionError(c, error);
   if (requestError) return requestError;
+
+  if (isDatabaseDailyQuotaError(error)) {
+    console.error("EdgeEver database daily quota exhausted", error);
+    return apiError(c, "database_daily_quota_exceeded",
+      "The instance's Cloudflare D1 daily database quota is exhausted. Daily quotas reset at 00:00 UTC. The instance owner can also upgrade the Workers plan.", 503);
+  }
 
   if (isDatabaseNotReadyError(error)) {
     console.error("EdgeEver database readiness check failed", error);

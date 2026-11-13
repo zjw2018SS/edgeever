@@ -91,7 +91,7 @@ describe("mobile app scope", () => {
 
   test("keeps version history reachable from an active note", () => {
     expect(memoDetailSource).toContain("{!memo.isDeleted ? (");
-    expect(memoDetailSource).toContain('label={resolvedLocale !== "zh-CN" ? "Version history" : "版本历史"}');
+    expect(memoDetailSource).toContain("label={getMobileCatalog(resolvedLocale).editor.versionHistory}");
     expect(memoDetailSource).toContain("onPress={() => closeActionsAndRun(() => onOpenRevisions(memo))}");
     expect(memoDetailSource).toContain('syncStatus === "conflict"');
     expect(memoDetailSource).toContain("onResolveSyncConflict");
@@ -213,7 +213,6 @@ describe("mobile app scope", () => {
     expect(workspaceEditorsSource).toContain("key={editorStartup.attempt}");
     expect(localTiptapEditorSource).toContain("autofocus: false");
     expect(localTiptapEditorSource).toContain('import("mermaid/dist/mermaid.min.js")');
-    expect(localTiptapEditorSource).toContain('import("beautiful-mermaid")');
     expect(localTiptapEditorSource).toContain('import { toCanvas } from "html-to-image"');
     expect(localTiptapEditorSource).not.toContain('import "mermaid/dist/mermaid.min.js"');
   });

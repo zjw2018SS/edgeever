@@ -2,16 +2,24 @@
 
 import { useEffect, useRef, useState } from "react";
 import type { DOMProps } from "expo/dom";
-import { isRemoteNoteImageFont } from "@edgeever/shared/font-catalog";
+import { isRemoteNoteImageFont, shouldLoadFontPreview } from "@edgeever/shared/font-catalog";
 import { resolveNoteImageTypography, type NoteImageFontStyle, type NoteImageTheme } from "@edgeever/shared/note-image-card";
 import { prepareNoteImageAssets } from "@edgeever/shared/note-image-fonts";
-import { getMobileNoteImageFontLabel, MOBILE_FONT_OPTIONS } from "../lib/note-image-font-options";
+import { getMobileNoteImageFontLabel, MOBILE_FONT_OPTIONS, type NoteImageFontLabels } from "../lib/note-image-font-options";
 import { noteImageAssetUrls } from "./note-image-asset-urls";
+
+export type MobileNoteImageFontPickerCopy = NoteImageFontLabels & {
+  title: string;
+  loadingPreview: string;
+  previewUnavailable: string;
+};
 
 type Props = {
   selected: NoteImageFontStyle;
   theme: NoteImageTheme;
+  /** Picks the Chinese sample sentence for CJK fonts; UI copy comes from `copy`. */
   chinese: boolean;
+  copy: MobileNoteImageFontPickerCopy;
   onSelect: (font: NoteImageFontStyle) => Promise<void>;
   dom?: DOMProps;
 };
@@ -19,7 +27,7 @@ type Props = {
 // Latin-only fonts need Latin characters to make their appearance comparable.
 const LATIN_FONTS = new Set(["anton", "inter", "dmserif", "bebas", "spacegrotesk", "jetbrains", "mono"]);
 
-export default function MobileNoteImageFontPicker({ selected, theme, chinese, onSelect }: Props) {
+export default function MobileNoteImageFontPicker({ selected, theme, chinese, copy, onSelect }: Props) {
   const listRef = useRef<HTMLDivElement>(null);
   const selectingRef = useRef(false);
   const [previews, setPreviews] = useState<Record<string, "ready" | "error">>({});
@@ -36,6 +44,7 @@ export default function MobileNoteImageFontPicker({ selected, theme, chinese, on
         if (!entry.isIntersecting) continue;
         observer.unobserve(entry.target);
         const id = entry.target.getAttribute("data-font") as NoteImageFontStyle;
+        if (!shouldLoadFontPreview(id, id === selected)) continue;
         const text = chinese && !LATIN_FONTS.has(id) ? "记录此刻的灵感" : "Capture a little inspiration";
         void prepareNoteImageAssets({ theme, fontStyle: id, text, urls: noteImageAssetUrls, embed: false })
           .then(() => { if (active) setPreviews(previous => ({ ...previous, [id]: "ready" })); })
@@ -62,12 +71,13 @@ export default function MobileNoteImageFontPicker({ selected, theme, chinese, on
         .font-status { display: block; margin-top: 6px; color: #64748b; font: 13px/1.5 system-ui, sans-serif; }
         .font-check { flex: 0 0 24px; color: #16a06e; font: 700 24px/1 system-ui, sans-serif; }
       `}</style>
-      <div className="font-list" role="radiogroup" aria-label={chinese ? "字体风格" : "Typography"} ref={listRef}>
+      <div className="font-list" role="radiogroup" aria-label={copy.title} ref={listRef}>
         {MOBILE_FONT_OPTIONS.map(item => {
-          const label = getMobileNoteImageFontLabel(item.id, theme, chinese, true);
+          const label = getMobileNoteImageFontLabel(item.id, theme, copy, true);
           const loaded = previews[item.id] === "ready";
           const failed = previews[item.id] === "error";
           const needsFont = item.id === "auto" || isRemoteNoteImageFont(item.id);
+          const previewEnabled = shouldLoadFontPreview(item.id, item.id === selected);
           return (
             <button
               key={item.id}
@@ -85,12 +95,12 @@ export default function MobileNoteImageFontPicker({ selected, theme, chinese, on
             >
               <span className="font-option-copy">
                 <span className="font-name">{label}</span>
-                {loaded || !needsFont ? (
-                  <span className="font-sample" style={{ fontFamily: resolveNoteImageTypography(theme, item.id).bodyFamily }}>{sampleFor(item.id)}</span>
+                {loaded || !needsFont || !previewEnabled ? (
+                  <span className="font-sample" style={previewEnabled ? { fontFamily: resolveNoteImageTypography(theme, item.id).bodyFamily } : undefined}>{sampleFor(item.id)}</span>
                 ) : (
                   <span className="font-status">{failed
-                    ? (chinese ? "示例暂不可用，仍可选择" : "Preview unavailable; you can still select this font")
-                    : (chinese ? "正在加载示例…" : "Loading preview…")}</span>
+                    ? copy.previewUnavailable
+                    : copy.loadingPreview}</span>
                 )}
               </span>
               <span className="font-check" aria-hidden="true">{selected === item.id ? "✓" : ""}</span>

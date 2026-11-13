@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import { readFileSync } from "node:fs";
+import { enUS } from "../packages/shared/src/i18n/en-US";
 
 const readSource = (path: string) => readFileSync(new URL(path, import.meta.url), "utf8");
 
@@ -26,8 +27,9 @@ describe("native mobile AI note assistant", () => {
       "rewrite-proofread",
       "translate",
     ]) {
-      expect(androidAssistantSource).toContain(`"${action}"`);
+      expect(Object.keys(enUS.aiAssistant.actions)).toContain(action);
     }
+    expect(androidAssistantSource).toContain("getMobileCatalog(resolvedLocale).aiAssistant.actions");
 
     for (const action of [
       "case summarize",
@@ -79,7 +81,7 @@ describe("native mobile AI note assistant", () => {
   });
 
   test("keeps the assistant reachable from each native note action menu", () => {
-    expect(androidDetailSource).toContain('label={resolvedLocale !== "zh-CN" ? "AI note assistant" : "AI 笔记助手"}');
+    expect(androidDetailSource).toContain("label={getMobileCatalog(resolvedLocale).aiAssistant.title}");
     expect(androidDetailSource).toContain("setAiAssistantOpen(true)");
     expect(androidDetailSource).toContain("<MobileAiAssistantModal");
     expect(iosDetailSource).toContain('env.preferences.t("AI 笔记助手", en: "AI note assistant"');
@@ -97,5 +99,33 @@ describe("native mobile AI note assistant", () => {
     expect(iosEditorSource).toContain("contentMarkdown: contentMarkdown");
     expect(iosEditorSource).toContain("currentTags: currentTags");
     expect(iosEditorSource).toContain("tagsText = (currentTags + additions).joined(separator: \", \")");
+  });
+
+  test("only a cleanly finished draft can replace; text before a dropped stream stays append-only (#652)", () => {
+    // Android assistant: the shared completion rule decides, and a thrown request marks the draft.
+    expect(androidAssistantSource).toContain("setCompletion((current) => trackAiDraftEvent(current, event))");
+    expect(androidAssistantSource).toContain("setCompletion(failAiDraftCompletion)");
+    expect(androidAssistantSource).toContain("Boolean(incomplete)");
+    // Android selection panel: a request starts as interrupted until a clean finish, and an error keeps it.
+    expect(androidEditorSource).toContain('incomplete: "interrupted",');
+    expect(androidEditorSource).toContain('error: payload.event.code === "ai_stream_interrupted" ? null : payload.event.message');
+    expect(androidEditorSource).toContain("Boolean(panel.incomplete)");
+    // iOS assistant: thrown requests fail the draft, and replace stays disabled for any incomplete reason.
+    expect(iosAssistantSource).toContain("if generationID == requestID { completion.fail() }");
+    expect(iosAssistantSource).toContain("disabled: incomplete != nil");
+  });
+
+  test("long runs replace the draft, show the part in progress and name parts that kept their source (#652 PR B)", () => {
+    expect(androidAssistantSource).toContain('if (event.type === "text-reset") setOutput(event.text);');
+    expect(androidAssistantSource).toContain('if (event.type === "progress") setProgress({ part: event.part, parts: event.parts });');
+    expect(androidAssistantSource).toContain("mobile.ai.incompleteParts");
+    expect(androidAssistantSource).toContain("formatAiPartList(completion.incompleteParts, resolvedLocale)");
+    expect(androidEditorSource).toContain('if (payload.event.type === "text-reset") {');
+    expect(androidEditorSource).toContain("incomplete: payload.event.truncated || incompleteParts.length ? \"truncated\" : null,");
+    expect(androidEditorSource).toContain("ai.incompleteParts.replace(\"{{parts}}\", formatAiPartList(panel.incompleteParts, locale))");
+    // iOS assistant: the same events, through the Swift runner.
+    expect(iosAssistantSource).toContain('case "text-reset": output = event.text ?? ""');
+    expect(iosAssistantSource).toContain("progress = AiRunProgress(part: part, parts: parts)");
+    expect(iosAssistantSource).toContain("if reason == .truncated, !completion.incompleteParts.isEmpty {");
   });
 });

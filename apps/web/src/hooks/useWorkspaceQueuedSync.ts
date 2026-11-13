@@ -6,6 +6,7 @@ import { emptySyncQueueSummary, type SyncQueueSummary } from "@/lib/sync-queue";
 import { MEMO_ID_REMAPPED_EVENT, NOTEBOOK_ID_REMAPPED_EVENT, notifyMemoIdRemapped, notifyMemoSyncAcknowledged, notifyNotebookIdRemapped } from "@/lib/sync-events";
 import { observeLocalMemoIdMappings, putLocalMemo, replaceLocalMemoId } from "@/lib/local-mirror";
 import { remapMemoIdsInLists } from "@/lib/memo-list-cache";
+import { remapMemoReadingStyle } from "@/lib/memo-reading-style";
 import { preserveRemappedMemoDetailQueries, resolveSyncedMemoId } from "@/lib/workspace-refresh";
 
 type UseWorkspaceQueuedSyncOptions = {
@@ -37,6 +38,10 @@ export const useWorkspaceQueuedSync = ({
   const applyMemoIdMappings = useCallback((memoIdMappings: ReadonlyMap<string, string>) => {
     if (memoIdMappings.size === 0) return;
 
+    for (const [temporaryId, remoteId] of memoIdMappings) {
+      remapMemoReadingStyle(localDataScope, temporaryId, remoteId);
+    }
+
     // Seed the durable-id query before changing the selection. The desktop
     // editor otherwise renders its loading state between the local-id and
     // remote-id queries, which looks like a full editor reload after create.
@@ -62,7 +67,7 @@ export const useWorkspaceQueuedSync = ({
       selectedMemoIdRef.current = nextSelectedMemoId;
       setSelectedMemoId(nextSelectedMemoId);
     }
-  }, [pendingCreatedMemoIdRef, queryClient, selectedMemoIdRef, setCreatedMemoEditId, setSelectedMemoId]);
+  }, [localDataScope, pendingCreatedMemoIdRef, queryClient, selectedMemoIdRef, setCreatedMemoEditId, setSelectedMemoId]);
 
   useEffect(() => observeLocalMemoIdMappings(localDataScope, applyMemoIdMappings), [applyMemoIdMappings, localDataScope]);
 
@@ -83,9 +88,10 @@ export const useWorkspaceQueuedSync = ({
         const hasRemote = current.notebooks.some((notebook) => notebook.id === remoteId);
         return {
           ...current,
-          notebooks: hasRemote
+          notebooks: (hasRemote
             ? current.notebooks.filter((notebook) => notebook.id !== temporaryId)
-            : current.notebooks.map((notebook) => notebook.id === temporaryId ? { ...notebook, id: remoteId } : notebook),
+            : current.notebooks.map((notebook) => notebook.id === temporaryId ? { ...notebook, id: remoteId } : notebook))
+            .map((notebook) => notebook.parentId === temporaryId ? { ...notebook, parentId: remoteId } : notebook),
         };
       });
       setSelectedNotebookId((current) => current === temporaryId ? remoteId : current);
@@ -146,7 +152,6 @@ export const useWorkspaceQueuedSync = ({
           if (!result || !["memo.merge", "notebook.create", "notebook.update", "template.create", "template.update", "resource.create"].includes(item.kind)) return;
           const {
             deleteLocalMemo,
-            deleteLocalNotebook,
             deleteLocalTemplate,
             getLocalMemo,
             putLocalMemo: putMemo,
@@ -168,8 +173,8 @@ export const useWorkspaceQueuedSync = ({
               if (source) await putMemo(localDataScope, { ...source, mergedIntoMemoId: (result as MemoDetail).id });
             }));
           } else if (item.kind === "notebook.create" && "name" in result && temporaryId) {
-            await deleteLocalNotebook(localDataScope, temporaryId);
-            await putLocalNotebook(localDataScope, result as Notebook);
+            // The sync core committed the mirror, references, mapping and
+            // acknowledgement together before notifying the live UI.
             notifyNotebookIdRemapped(temporaryId, (result as Notebook).id);
           } else if (item.kind === "notebook.update" && "name" in result) {
             await putLocalNotebook(localDataScope, result as Notebook);

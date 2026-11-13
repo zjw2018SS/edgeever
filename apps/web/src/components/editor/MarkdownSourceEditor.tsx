@@ -30,9 +30,11 @@ import {
   gruvboxDark,
 } from "@uiw/codemirror-themes-all";
 import type { MarkdownThemeName } from "../ThemeProvider";
+import { isPrimaryModifierPressed } from "@/lib/app-helpers";
 import { getAiSlashCommandStart } from "@/lib/editor-shortcuts";
 import { lightMarkdownHighlightStyles } from "@/lib/markdown-source-highlight";
 import { cn } from "@/lib/utils";
+import { editorFontLoadState } from "@/lib/editor-catalog-fonts";
 import { getResourceFilesFromDataTransfer } from "./editor-pane-helpers";
 
 type PendingPaste = { from: number; to: number; originalText: string };
@@ -93,7 +95,7 @@ const baseEditorTheme = EditorView.theme({
     width: "100%",
     fontSize: "var(--editor-body-font-size, 16px)",
     fontFamily:
-      'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
+      'var(--editor-code-font-family, ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace)',
   },
   ".cm-scroller": {
     overflow: "auto",
@@ -149,6 +151,19 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorRef, Markdown
     const pendingPastesRef = useRef(new Set<PendingPaste>());
     const onSelectionChangeRef = useRef(onSelectionChange);
     onSelectionChangeRef.current = onSelectionChange;
+
+    useEffect(() => {
+      // A CSS variable change and a later font download can both change glyph
+      // widths without changing the document. Refresh CodeMirror's measurements.
+      const measure = () => cmRef.current?.view?.requestMeasure();
+      const observer = new MutationObserver(measure);
+      observer.observe(document.documentElement, {
+        attributes: true,
+        attributeFilter: ["style", "data-editor-code-font"],
+      });
+      const unsubscribe = editorFontLoadState.subscribe(measure);
+      return () => { observer.disconnect(); unsubscribe(); };
+    }, []);
 
     useEffect(() => {
       let frame = 0;
@@ -315,9 +330,9 @@ export const MarkdownSourceEditor = forwardRef<MarkdownSourceEditorRef, Markdown
 
     const handleKeyDown = useCallback(
       (event: React.KeyboardEvent | KeyboardEvent) => {
-        // Link shortcut: Cmd+K / Ctrl+K
+        // Link shortcut uses the platform primary modifier, leaving macOS Control+K for deleting to the line end.
         if (
-          (event.ctrlKey || event.metaKey) &&
+          isPrimaryModifierPressed(event) &&
           !event.altKey &&
           !event.shiftKey &&
           event.key.toLowerCase() === "k"

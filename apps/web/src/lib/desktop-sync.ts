@@ -368,6 +368,7 @@ const syncOutboxItem = async (item: DesktopOutboxItem, stagedRewrites: StagedRes
     const data = await api.createMemo({
       notebookId: String(payload.notebookId),
       title: String(payload.title ?? ""),
+      contentJson: payload.contentJson as TiptapDoc | undefined,
       contentMarkdown: typeof payload.contentMarkdown === "string" ? payload.contentMarkdown : undefined,
       tags: Array.isArray(payload.tags) ? payload.tags.filter((tag): tag is string => typeof tag === "string") : [],
       createdAt: typeof payload.createdAt === "string" ? payload.createdAt : undefined,
@@ -484,6 +485,13 @@ const syncOutboxItem = async (item: DesktopOutboxItem, stagedRewrites: StagedRes
       name: typeof payload.name === "string" ? payload.name : undefined,
       parentId: Object.prototype.hasOwnProperty.call(payload, "parentId") ? (typeof payload.parentId === "string" ? payload.parentId : null) : undefined,
       sortOrder: typeof payload.sortOrder === "number" ? payload.sortOrder : undefined,
+      icon: payload.icon === null || typeof payload.icon === "string" ? payload.icon : undefined,
+      color: payload.color === null || typeof payload.color === "string" ? payload.color : undefined,
+      textColor: payload.textColor === null || typeof payload.textColor === "string" ? payload.textColor : undefined,
+      iconInverted: typeof payload.iconInverted === "boolean" ? payload.iconInverted : undefined,
+      rowInverted: typeof payload.rowInverted === "boolean" ? payload.rowInverted : undefined,
+      isBold: typeof payload.isBold === "boolean" ? payload.isBold : undefined,
+      colorTarget: payload.colorTarget === "icon" || payload.colorTarget === "name" || payload.colorTarget === "both" ? payload.colorTarget : undefined,
     });
     await acknowledge(item, undefined, data.notebook);
     return null;

@@ -3,16 +3,34 @@ import type { TiptapDoc, TiptapNode, TiptapTextNode } from "./content";
 import type { PublicNoteProse } from "./note-prose";
 import { parseMemoLinkHref } from "./note-links";
 import type { NotebookSiteSettings } from "./notebook-site";
+import { getImageLink } from "./image-link";
 
 export type MemoShare = {
   memoId: string;
   token: string;
+  /** Owner-chosen public address. The token link keeps working alongside it. */
+  slug: string | null;
   createdAt: string;
   updatedAt: string;
   passwordProtected: boolean;
+  /** Independent standalone-page controls; both default to visible. */
+  showUpdatedAt: boolean;
+  showBranding: boolean;
   /** Plaintext is returned only immediately after the owner enables or regenerates a password. */
   password?: string;
+  /** UTC instant after which the public link stops working; null never expires. Older servers omit it. */
+  expiresAt?: string | null;
+  /** Decided by the server when it answered; clients never compare expiry themselves. */
+  expired?: boolean;
+  /** Times the note content was served to a visitor, and when that last happened. */
+  viewCount?: number;
+  lastViewedAt?: string | null;
 };
+
+export { isValidMemoShareSlug, MEMO_SHARE_SLUG_MAX_LENGTH, MEMO_SHARE_SLUG_PATTERN, RESERVED_MEMO_SHARE_SLUGS } from "./share-slug";
+
+/** Path segment for the public link: the custom address when set, otherwise the token. */
+export const memoSharePathSegment = (share: Pick<MemoShare, "slug" | "token">) => share.slug ?? share.token;
 
 export type ManagedMemoShare = MemoShare & {
   memoTitle: string | null;
@@ -72,10 +90,13 @@ export type PublicMemoShare = {
   bodyFont: PublishedNoteBodyFont | null;
   /** Account reading settings for the article body. Column width stays on the author's editor. */
   prose: PublicNoteProse;
+  /** Older servers and notebook shares may omit these; omission means visible. */
+  showUpdatedAt?: boolean;
+  showBranding?: boolean;
 };
 
 const RESOURCE_URL_PATTERN =
-  /^\/api\/v1\/resources\/([^/?#]+)\/blob(?:[?#].*)?$/;
+  /^\/api\/v1\/resources\/([^/?#]+)\/blob([?#].*)?$/;
 
 const rewriteAttributeValue = (
   value: unknown,
@@ -86,7 +107,7 @@ const rewriteAttributeValue = (
   if (typeof value !== "string") return value;
   const match = value.match(RESOURCE_URL_PATTERN);
   if (match) {
-    return `${access?.resourceBasePath ?? `/api/public/shares/${encodeURIComponent(token)}/resources`}/${encodeURIComponent(match[1])}/blob`;
+    return `${access?.resourceBasePath ?? `/api/public/shares/${encodeURIComponent(token)}/resources`}/${encodeURIComponent(match[1])}/blob${match[2] ?? ""}`;
   }
 
   const memoId = parseMemoLinkHref(value);
@@ -108,10 +129,12 @@ export const rewriteMemoResourcesForShare = (
     const attrs =
       "attrs" in node && node.attrs
         ? Object.fromEntries(
-            Object.entries(node.attrs).map(([key, value]) => [
-              key,
-              rewriteAttributeValue(value, token, memoShareTokens, access),
-            ]),
+            Object.entries(node.attrs).map(([key, value]) => {
+              const link = node.type === "image" && key === "link" ? getImageLink(value) : null;
+              return [key, link
+                ? { ...link, href: rewriteAttributeValue(link.href, token, memoShareTokens, access) }
+                : rewriteAttributeValue(value, token, memoShareTokens, access)];
+            }),
           )
         : undefined;
     const marks =

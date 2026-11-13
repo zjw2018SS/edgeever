@@ -4,6 +4,7 @@ import {
   type CreateEdgeEverDocumentExtensionsOptions,
 } from "./document-extensions";
 import { MERGE_DIVIDER_NODE_TYPE } from "./merge-divider";
+import { DEFAULT_MEMO_TITLE } from "./memo-title";
 import { PDF_ATTACHMENT_NODE_TYPE, upgradeStandalonePdfLinks } from "./pdf-attachment";
 import { FILE_ATTACHMENT_NODE_TYPE, upgradeStandaloneFileLinks } from "./file-attachment";
 import {
@@ -14,9 +15,11 @@ import {
 import { projectNativeUnknownContentForMarkdown } from "./mobile-content-compatibility";
 import { PLUGIN_EMBED_NODE_TYPE } from "./plugin-embed";
 import { NEW_IMAGE_WIDTH_PERCENT, parseImageWidth } from "./image-display";
-import { IMAGE_GALLERY_NODE_TYPE, groupConsecutiveImagesIntoGalleries, normalizeImageGalleries } from "./image-gallery";
+import { IMAGE_GALLERY_NODE_TYPE, groupConsecutiveImagesIntoGalleries, normalizeImageGalleries, prepareImageListsForMarkdown } from "./image-gallery";
 import { EMPTY_EXTERNAL_LINK_NODE_TYPE } from "./empty-external-link";
 import { FRONT_MATTER_LANGUAGE, createFrontMatterNode, getFrontMatterSource, splitMarkdownFrontMatter } from "./front-matter";
+import { splitMarkdownParseChunks } from "./markdown-block-start";
+import { createEdgeEverMarked } from "./markdown-options";
 
 export { PluginEmbed, PLUGIN_EMBED_NODE_TYPE, pluginEmbedToMarkdown, normalizePluginEmbedAttributes } from "./plugin-embed";
 export type { PluginEmbedAttributes } from "./plugin-embed";
@@ -76,16 +79,7 @@ export type TiptapDoc = {
   content: TiptapNode[];
 };
 
-export const DEFAULT_MEMO_TITLE = "无标题笔记";
-
-/**
- * Title to show for a note. Untitled notes are stored with the zh-CN default
- * title, so it is replaced by the reader's localized label like an empty one.
- */
-export const getMemoDisplayTitle = (title: string | null | undefined, untitledLabel: string) => {
-  const trimmed = title?.trim() ?? "";
-  return trimmed && trimmed !== DEFAULT_MEMO_TITLE ? trimmed : untitledLabel;
-};
+export { DEFAULT_MEMO_TITLE, getMemoDisplayTitle } from "./memo-title";
 
 export const resolveMergedMemoTitle = (
   inputTitle: string | null | undefined,
@@ -111,6 +105,7 @@ export const emptyDoc = (): TiptapDoc => ({
 export const createEdgeEverMarkdownManager = (
   options: CreateEdgeEverDocumentExtensionsOptions,
 ) => new MarkdownManager({
+  marked: createEdgeEverMarked(),
   extensions: createEdgeEverDocumentExtensions({
     ...options,
     markdown: true,
@@ -146,6 +141,16 @@ const withDefaultImageWidths = (node: TiptapNode): TiptapNode => {
   return { ...next, attrs: { ...next.attrs, width: NEW_IMAGE_WIDTH_PERCENT } };
 };
 
+// Long notes are split into pieces. marked otherwise copies the rest of the
+// note after every paragraph, and that copy blocks the single-threaded server.
+const parseMarkdownBody = (markdown: string): TiptapNode[] => {
+  const chunks = splitMarkdownParseChunks(markdown);
+  if (chunks.length <= 1) {
+    return (markdownManager.parse(markdown) as TiptapDoc).content ?? [];
+  }
+  return chunks.flatMap((chunk) => (markdownManager.parse(chunk) as TiptapDoc).content ?? []);
+};
+
 export const markdownToDoc = (markdown: string): TiptapDoc => {
   const normalized = markdown.replace(/\r\n?/g, "\n");
   if (!normalized) {
@@ -153,12 +158,12 @@ export const markdownToDoc = (markdown: string): TiptapDoc => {
   }
 
   const header = splitMarkdownFrontMatter(normalized);
-  const parsed = markdownManager.parse(expandExtraBlankLinesForParse(header?.body ?? normalized)) as TiptapDoc;
+  const content = parseMarkdownBody(expandExtraBlankLinesForParse(header?.body ?? normalized));
   return {
-    ...parsed,
+    type: "doc",
     content: [...(header ? [createFrontMatterNode(header.source)] : []),
-      ...groupConsecutiveImagesIntoGalleries(parsed.content.map(withDefaultImageWidths)),
-      ...(header && !parsed.content.length ? [{ type: "paragraph" }] : [])],
+      ...groupConsecutiveImagesIntoGalleries(content.map(withDefaultImageWidths)),
+      ...(header && !content.length ? [{ type: "paragraph" }] : [])],
   };
 };
 
@@ -400,9 +405,9 @@ export const docToMarkdown = (doc: unknown): string => {
 
   const properties = getFrontMatterSource(doc as TiptapDoc);
   const body = properties === null ? doc : { ...doc, content: root.content.slice(1) };
-  const serializableDoc = protectLiteralDollarPairs(projectNativeUnknownContentForMarkdown(
+  const serializableDoc = protectLiteralDollarPairs(prepareImageListsForMarkdown(projectNativeUnknownContentForMarkdown(
     stripEditorOnlyNodes(body) as TiptapDoc
-  ));
+  )));
   const markdown = markdownManager
     .serialize(serializableDoc as Parameters<typeof markdownManager.serialize>[0])
     .replaceAll(LITERAL_DOLLAR_PLACEHOLDER, "\\$");

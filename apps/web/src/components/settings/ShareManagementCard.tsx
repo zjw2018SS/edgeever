@@ -1,8 +1,8 @@
 import { useInfiniteQuery } from "@tanstack/react-query";
-import { FileText, Link2, LoaderCircle, LockKeyhole } from "lucide-react";
+import { Clock3, Eye, FileText, Link2, LoaderCircle, LockKeyhole } from "lucide-react";
 import { useState } from "react";
 import { useTranslation } from "react-i18next";
-import type { ManagedMemoShare } from "@edgeever/shared";
+import { memoSharePathSegment, type ManagedMemoShare } from "@edgeever/shared";
 import { ShareManagementActions } from "./ShareManagementActions";
 import { NotebookShareManagement } from "./NotebookShareManagement";
 import { Button } from "@/components/ui/button";
@@ -39,7 +39,7 @@ export const ShareManagementCard = ({ userId, onOpenMemo }: Props) => {
   const locale = i18n.resolvedLanguage || i18n.language;
   const formatDate = (value: string) => new Intl.DateTimeFormat(locale, { dateStyle: "medium" }).format(new Date(value));
   const copyLink = async (share: ManagedMemoShare) => {
-    setCopyResult({ memoId: share.memoId, success: await copyTextToClipboard(getPublicShareUrl(share.token)) });
+    setCopyResult({ memoId: share.memoId, success: await copyTextToClipboard(getPublicShareUrl(memoSharePathSegment(share))) });
   };
 
   return (
@@ -92,12 +92,29 @@ export const ShareManagementCard = ({ userId, onOpenMemo }: Props) => {
                           <LockKeyhole className="h-3 w-3" />{t("sharing.passwordProtected")}
                         </span>
                       ) : null}
+                      {share.expiresAt ? (
+                        <span className={`inline-flex items-center gap-1 ${share.expired ? "text-rose-600" : "text-slate-600"}`}>
+                          <Clock3 className="h-3 w-3" />
+                          {share.expired ? t("sharing.expiredBadge") : t("sharing.expiresOn", { date: formatDate(share.expiresAt) })}
+                        </span>
+                      ) : null}
+                      {share.viewCount !== undefined ? (
+                        <span className="inline-flex items-center gap-1">
+                          <Eye className="h-3 w-3" />
+                          {share.viewCount > 0
+                            ? [
+                                t("sharing.viewsCount", { count: share.viewCount }),
+                                share.lastViewedAt ? t("sharing.viewsLast", { date: formatDate(share.lastViewedAt) }) : null,
+                              ].filter(Boolean).join(" · ")
+                            : t("sharing.viewsNone")}
+                        </span>
+                      ) : null}
                     </p>
                   </div>
                   <ShareManagementActions
                     onCopy={() => void copyLink(share)}
                     copyLabel={copyResult?.memoId === share.memoId ? t(copyResult.success ? "sharing.copied" : "sharing.copyFailed") : undefined}
-                    onOpen={() => window.open(getPublicShareUrl(share.token), "_blank", "noopener,noreferrer")}
+                    onOpen={() => window.open(getPublicShareUrl(memoSharePathSegment(share)), "_blank", "noopener,noreferrer")}
                     onManage={() => setManagedMemoId(share.memoId)}
                   />
                 </div>

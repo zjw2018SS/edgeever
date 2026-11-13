@@ -1,3 +1,4 @@
+import type { NotebookUpdateInput } from "@edgeever/shared";
 import { assertLocalMemoSnapshot } from "./local-memo-guard";
 import { localizeDefaultMemoTemplate } from "@edgeever/shared/memo-template-seeds";
 import { markdownToDoc, type MemoDetail, type MemoRevision, type MemoTemplate, type Notebook, type Resource, type ResourceListItem, type ResourceStorageSummary, type TagSummary, type TiptapDoc } from "@edgeever/shared";
@@ -48,7 +49,7 @@ import { localDb, type MemoUpdateSyncPayload } from "@/lib/local-db";
 import { runLocalDatabaseOperationWithRecovery } from "@/lib/local-database-recovery";
 import { createDesktopRepository } from "@/lib/desktop-repository";
 import { isBrowserOffline } from "@/lib/network-status";
-import { notifySyncQueueDeferred } from "@/lib/sync-events";
+import { NOTEBOOK_LIST_REFRESHED_EVENT, notifySyncQueueDeferred, type NotebookListRefresh } from "@/lib/sync-events";
 import { isActiveLocalMemoUpdateStatus, shouldAcceptRemoteMemoDetail } from "@/lib/memo-detail-freshness";
 import { cacheLocalResourceBytes, getCachedLocalResourceBytes } from "@/lib/local-resource-cache";
 import { withRepositoryMutationEvents } from "@/lib/repository-events";
@@ -56,7 +57,7 @@ import { withRepositoryMutationEvents } from "@/lib/repository-events";
 export type EdgeEverRepository = {
   listNotebooks(): Promise<{ notebooks: Notebook[] }>;
   createNotebook(input: { name: string; parentId?: string | null }): Promise<{ notebook: Notebook }>;
-  updateNotebook(notebookId: string, input: { name?: string; parentId?: string | null; sortOrder?: number }): Promise<{ notebook: Notebook }>;
+  updateNotebook(notebookId: string, input: NotebookUpdateInput): Promise<{ notebook: Notebook }>;
   deleteNotebook(notebookId: string): Promise<{ ok: true }>;
   restoreNotebook(notebookId: string): Promise<{ notebook: Notebook }>;
   listTemplates(): Promise<{ templates: MemoTemplate[] }>;
@@ -197,10 +198,12 @@ const beginNotebookListRefresh = (scope: string) => {
 };
 
 const applyRemoteNotebookList = async (scope: string, notebooks: Notebook[], generation: number) => {
-  if (notebookListGeneration.get(scope) !== generation) return;
-  const guards = await readNotebookSyncGuards(scope);
-  if (notebookListGeneration.get(scope) !== generation) return;
-  await reconcileLocalNotebooks(scope, notebooks, guards.pendingDeleteIds, guards.pendingCreateIds);
+  if (notebookListGeneration.get(scope) !== generation) return false;
+  return localDb.transaction("rw", [localDb.notebooks, localDb.syncQueue], async () => {
+    const guards = await readNotebookSyncGuards(scope);
+    if (notebookListGeneration.get(scope) !== generation) return false;
+    return reconcileLocalNotebooks(scope, notebooks, guards.pendingDeleteIds, guards.pendingCreateIds, guards.pendingUpdateIds);
+  });
 };
 
 export const createWebRepository = (scope: string): EdgeEverRepository => {
@@ -208,18 +211,26 @@ export const createWebRepository = (scope: string): EdgeEverRepository => {
 
   return ({
   async listNotebooks() {
+    const generation = beginNotebookListRefresh(scope);
     const local = await listLocalNotebooks(scope);
     if (local.notebooks.length > 0 || isOffline()) {
       if (!isOffline()) {
-        const generation = beginNotebookListRefresh(scope);
         void api.listNotebooks()
-          .then((remote) => applyRemoteNotebookList(scope, remote.notebooks, generation))
+          .then(async (remote) => {
+            if (!await applyRemoteNotebookList(scope, remote.notebooks, generation)) return;
+            const refreshed = await listLocalNotebooks(scope);
+            if (notebookListGeneration.get(scope) !== generation) return;
+            // The local-first query already returned, so updating IndexedDB
+            // alone cannot update the notebook tree that is on screen.
+            window.dispatchEvent(new CustomEvent<NotebookListRefresh>(NOTEBOOK_LIST_REFRESHED_EVENT, {
+              detail: { scope, notebooks: refreshed.notebooks },
+            }));
+          })
           .catch(() => {});
       }
       return local;
     }
 
-    const generation = beginNotebookListRefresh(scope);
     const remote = await api.listNotebooks();
     await applyRemoteNotebookList(scope, remote.notebooks, generation);
     return remote;
@@ -233,14 +244,17 @@ export const createWebRepository = (scope: string): EdgeEverRepository => {
   },
 
   async updateNotebook(notebookId, input) {
-    const local = await updateLocalNotebook(scope, notebookId, input);
+    const local = await localDb.transaction("rw", [localDb.notebooks, localDb.syncQueue], async () => {
+      const notebook = await updateLocalNotebook(scope, notebookId, input);
+      if (notebook) await queueLocalAction(scope, "notebook.update", notebookId, { notebookId, ...input });
+      return notebook;
+    });
     if (!local) {
       if (isOffline()) throw new Error("Notebook is not available in the local mirror");
       const result = await api.updateNotebook(notebookId, input);
       await putLocalNotebook(scope, result.notebook);
       return result;
     }
-    await queueLocalAction(scope, "notebook.update", notebookId, { notebookId, ...input });
     window.dispatchEvent(new CustomEvent("edgeever:sync-queue-changed"));
     return { notebook: local };
   },
@@ -470,6 +484,7 @@ export const createWebRepository = (scope: string): EdgeEverRepository => {
 
     const remote = await api.listMemos({
       notebookId: params.notebookId,
+      includeTotal: params.includeTotal,
       // The scope reaches sub-notebooks only when it lists more than the notebook itself.
       includeDescendants: Boolean(params.notebookIds?.some((notebookId) => notebookId !== params.notebookId)),
       q: params.q,
@@ -477,7 +492,7 @@ export const createWebRepository = (scope: string): EdgeEverRepository => {
       trash: params.trash,
       filter: params.filter,
       sort: params.sort,
-      cursor: params.offset ? String(params.offset) : null,
+      cursor: params.cursor ?? (params.offset ? String(params.offset) : null),
       limit: params.limit,
     });
     return remote;

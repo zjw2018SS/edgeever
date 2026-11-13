@@ -4,12 +4,14 @@ import type { Hono } from "hono";
 import { auditStatement } from "./audit";
 import type { AppContext, AppEnv, AuthContext } from "./api-context";
 import { hashPassword } from "./auth-crypto";
+import { hashPasswordForUser } from "./auth-totp";
 import { isProtectedDemoAccount } from "./demo-mode";
 import { createId, isoNow } from "./entity-utils";
 import { badRequest, conflict, forbidden, notFound, unauthorized } from "./http-errors";
 import { requireOwner } from "./request-auth";
 import { mapResourceStorageSummary, type ResourceStatsRow } from "./resource-service";
 import type { DatabaseAdapter } from "./storage-contract";
+import { markWorkspaceExampleSeedPendingStatement } from "./workspace-example-seed";
 import {
   createDefaultNotebookRows,
   markWorkspaceSeedLocalizationPendingStatement,
@@ -139,6 +141,7 @@ export const registerUserRoutes = (
          VALUES (?, ?, NULL, ?, ?, 'notebook', ?, ?, ?, ?)`,
       ).bind(notebook.id, workspaceId, notebook.name, notebook.slug, notebook.color, notebook.sortOrder, now, now)),
       markWorkspaceSeedLocalizationPendingStatement(context.env.storage.db, workspaceId, now),
+      markWorkspaceExampleSeedPendingStatement(context.env.storage.db, workspaceId, now),
       auditStatement(context.env.storage.db, "user", context.get("auth").actorId, "user.create", "user", userId, {
         username: input.username,
       }),
@@ -178,7 +181,7 @@ export const registerUserRoutes = (
     }
     if (input.password !== undefined) {
       updates.push("password_hash = ?");
-      binds.push(await hashPassword(input.password));
+      binds.push(await hashPasswordForUser(context.env.storage.db, userId, input.password));
     }
     if (input.isDisabled !== undefined) {
       updates.push("is_disabled = ?");

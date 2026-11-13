@@ -11,6 +11,9 @@ const createDatabase = (options: { userId?: string; error?: Error } = {}) =>
   ({
     prepare(sql: string) {
       return {
+        bind() {
+          return this;
+        },
         async first() {
           if (options.error) throw options.error;
           if (sql.includes("d1_migrations")) return { name: "0035_normalized_memo_tags.sql" };
@@ -155,6 +158,22 @@ describe("production authentication guard", () => {
       expect(response.headers.get("X-Robots-Tag")).toBe("noindex, nofollow, noarchive, nosnippet, noimageindex");
       expect(response.headers.get("Cache-Control")).toBe("private, no-store");
       expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
+    }
+  });
+
+  test("reports exhausted D1 daily quotas without exposing the underlying database error", async () => {
+    for (const operation of ["read", "write"]) {
+      const response = await fetchApi("/api/health", {
+        DB: createDatabase({ error: new Error("Query failed", {
+          cause: new Error(`D1_ERROR: Your account has exceeded D1's free tier daily row ${operation} limit. private-query-details`),
+        }) }),
+        EDGE_EVER_AUTH_PASSWORD: "configured-secret",
+      });
+      expect(response.status).toBe(503);
+      const body = await response.json();
+      expect(body.error.code).toBe("database_daily_quota_exceeded");
+      expect(body.error.message).toContain("00:00 UTC");
+      expect(JSON.stringify(body)).not.toContain("private-query-details");
     }
   });
 

@@ -3,27 +3,30 @@
     <img src="assets/brand/edgeever-icon.svg" alt="EdgeEver logo" width="48" align="absmiddle" /> EdgeEver
   </h1>
   <p>
-    <b>AI-native knowledge base & Evernote/Obsidian alternative with instant sync & native MCP. Free on Cloudflare or self-hosted via Docker.</b>
+    <b>AI-native knowledge base & Evernote/Obsidian alternative. Instant all-platform sync, rich notes (tables, mind maps, diagrams, posters), web clipper & MCP. 100% free on Cloudflare or Docker.</b>
   </p>
   <p>
     <a href="https://github.com/tianma-if/edgeever/stargazers"><img src="https://img.shields.io/github/stars/tianma-if/edgeever?style=social" alt="GitHub Stars" /></a>
     <a href="https://github.com/tianma-if/edgeever/network/members"><img src="https://img.shields.io/github/forks/tianma-if/edgeever?style=social" alt="GitHub Forks" /></a>
+    <a href="https://github.com/tianma-if/edgeever/releases"><img src="https://img.shields.io/github/downloads/tianma-if/edgeever/total?style=social&amp;logo=github&amp;label=Release%20Downloads" alt="GitHub Release asset downloads" /></a>
     <a href="https://github.com/tianma-if/edgeever/pkgs/container/edgeever"><img src="https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fghcr-badge.elias.eu.org%2Fapi%2Ftianma-if%2Fedgeever%2Fedgeever&query=downloadCount&style=social&logo=docker&label=Docker%20Pulls" alt="Docker Pulls" /></a>
     <a href="https://www.producthunt.com/products/edgeever?utm_source=other&utm_medium=social"><img src="https://img.shields.io/badge/Product%20Hunt-ea532a?style=social&logo=product-hunt" alt="Product Hunt" /></a>
     <a href="https://hellogithub.com/repository/tianma-if/edgeever" target="_blank"><img src="https://api.hellogithub.com/v1/widgets/recommend.svg?rid=150fee4403f6433880bda91e9576ac06&claim_uid=TWNAjisURpnhL1l&theme=small" alt="Featured｜HelloGitHub" /></a>
     <a href="#sponsor--support"><img src="https://img.shields.io/badge/Sponsor-EdgeEver-ea4aaa?logo=github-sponsors" alt="Sponsor & Support" /></a>
   </p>
   <p>
-    <a href="README.zh-CN.md">简体中文</a> | <a href="README.zh-TW.md">繁體中文</a> | <b>English</b> | <a href="README.ja.md">日本語</a> | <a href="README.pl-PL.md">Polski</a>
+    <a href="README.zh-CN.md">简体中文</a> | <a href="README.zh-TW.md">繁體中文</a> | <b>English</b> | <a href="README.es.md">Español</a> | <a href="README.de.md">Deutsch</a> | <a href="README.fr.md">Français</a> | <a href="README.ja.md">日本語</a> | <a href="README.pl-PL.md">Polski</a> | <a href="README.ru.md">Русский</a>
   </p>
   <p>
-    <a href="https://t.me/+wwUx1BYLrIdiZjY1"><img src="assets/readme/community/telegram.svg" alt="Telegram" width="16" height="16" align="absmiddle" /> Telegram Group</a> &nbsp;|&nbsp;
+    <a href="https://t.me/+GvKYnL37feUwOTNl"><img src="assets/readme/community/telegram.svg" alt="Telegram" width="16" height="16" align="absmiddle" /> Telegram Group</a> &nbsp;|&nbsp;
     <a href="https://demo.edgeever.org">🌐 Live Demo</a> &nbsp;|&nbsp;
+    <a href="https://github.com/users/tianma-if/projects/1">🗺️ Roadmap</a> &nbsp;|&nbsp;
     <a href="#all-platform-clients--browser-extension">📱 Clients & Extension</a> &nbsp;|&nbsp;
-    <a href="#features">Feature Matrix & Capabilities</a>
+    <a href="#features">Feature Matrix & Capabilities</a> &nbsp;|&nbsp;
+    <a href="docs/note-migration-guide.en-US.md">📥 Note Migration</a>
   </p>
   <p align="center">
-    <img src="assets/readme/edgeever-hero-v6.png" alt="EdgeEver Workspace Preview" width="800" />
+    <img src="assets/readme/edgeever-hero-v8-en.png" alt="EdgeEver Workspace Preview" width="800" />
   </p>
 </div>
 
@@ -40,6 +43,7 @@ Many users of **note-taking apps and personal knowledge bases** simply want a **
 
 * **Evernote**: Offers the smoothest, most seamless multi-device cloud sync experience. Yet as it evolved into a full-featured commercial suite, ads and add-ons multiplied while system overhead climbed. Meanwhile, free-tier quotas tightened, premium AI subscriptions grew expensive, and it remains difficult to integrate into modern self-hosted and private AI workflows.
 * **Obsidian**: Open files, closed-source core. Official Sync is paid and third-party sync is tedious; relying entirely on flat local file scanning causes noticeable cold-start and search lag once notes reach thousands or heavy plugins are loaded; storing images and attachments alongside notes quickly bloats vaults, making mobile sync sluggish and leaving orphaned files behind; and it is overly heavy for lightweight, capture-anywhere use.
+* **Joplin**: A veteran open-source three-pane note app, yet its UI design and editing experience feel stuck more than a decade in the past, lacking modern polish and fluidity. Fast official sync (Joplin Cloud) requires a paid subscription; free sync via WebDAV or cloud drives relies on file-by-file polling that becomes sluggish on mobile as notes and attachments grow, while self-hosting Joplin Server requires maintaining your own server with no zero-cost serverless option. It also lacks a full browser-based web workspace and native AI Agent capabilities (MCP/ACP).
 * **Memos & Stream Notes**: Clean and simple, but their social-timeline layouts differ fundamentally from the structured productivity of a classic three-pane workflow.
 * **SiYuan & Block-based PKMs**: Powerful with self-hosting support, but their granular "block-level" architecture imposes noticeable cognitive overhead for quick daily capture and continuous prose writing. Furthermore, they lack a true zero-cost serverless deployment tier, and multi-device sync relies on paid official subscriptions or paying extra to unlock S3/WebDAV sync features with your own storage.
 
@@ -79,7 +83,7 @@ The public demo resets every day at 3:00 AM (China Standard Time) and restores s
 <a id="features"></a>
 ## Feature Matrix & Capabilities
 
-An all-in-one workspace connecting inspiration capture, deep creation, and knowledge compounding (👉 **[Explore 17 step-by-step showcases with screenshots](docs/best-practices.md)**):
+An all-in-one workspace connecting inspiration capture, deep creation, and knowledge compounding (👉 **[Explore 19 step-by-step showcases with screenshots](docs/best-practices.md)**):
 
 | Module | Core Features | Advanced Features |
 | :--- | :--- | :--- |
@@ -87,7 +91,7 @@ An all-in-one workspace connecting inspiration capture, deep creation, and knowl
 | **Organization & Search** | • Infinite-depth notebooks & folder tree navigation<br>• Tagging system, drag-and-drop sorting, batch note merging/moving<br>• Millisecond-level full-text search with historical filtering | • **Standalone Knowledge Base Publishing**: One-click publish entire notebooks as static documentation sites with tree navigation & password protection<br>• Multi-user spaces & physical tenant data isolation |
 | **Capture & Media** | • Universal attachment uploads (PDF, Office, audio/video, archives)<br>• Browser extension precision clipping for web text & images<br>• Mobile system share sheet to save photos & articles | • **Deep Multi-Platform Structured Clipping**: Deeply adapted for Xiaohongshu, X (Twitter), Zhihu, Reddit, GitHub, YouTube, Bilibili, and 20+ sources<br>• **WeChat Chat History Archiving**: One-click full transcript import on macOS with timestamps, quotes, emojis, and media<br>• **Client-Side Image Compression**: Automatic 50%–90% silent size reduction; chunked streaming safely supports up to 1 GiB files |
 | **Data & Visuals** | • Native table editing & Markdown table rendering<br>• Native Mermaid diagrams (flowcharts, sequence diagrams, architecture) | • **AI Multi-Dimensional Tables**: Prompt-to-database with automatic field typing (tags, dates, selects)<br>• **Public Online Collection Forms**: One-click shareable forms without login, syncing responses into tables in real time<br>• **AI Diagram & Infographic Generation**: In-place creation of timelines, comparison charts, quadrant matrices & mind maps |
-| **AI & Ecosystem** | • Companion sidebar AI assistant for summaries, proofreading & translations<br>• BYOK (Bring Your Own Key): compatible with OpenAI, Claude, Gemini & custom endpoints | • **Native Agent Protocols (MCP & ACP)**: Built-in MCP for external agent read/write; ACP in desktop app to drive local coding agents directly<br>• **AI RSS Daily Digest**: Automated feed aggregation, AI noise filtering, and structured digest generation<br>• Extensible Plugin Development API |
+| **AI & Ecosystem** | • Companion sidebar AI assistant for summaries, proofreading & translations<br>• BYOK (Bring Your Own Key): compatible with OpenAI, Claude, Gemini & custom endpoints | • **Native Agent Protocols (MCP & ACP)**: Built-in MCP for external agent read/write; ACP in desktop app to drive local agents such as Codex, Claude Code and CodeBuddy directly<br>• **AI RSS Daily Digest**: Automated feed aggregation, AI noise filtering, and structured digest generation<br>• Extensible Plugin Development API |
 | **Multi-Device Sync & Foundation** | • Seamless, low-latency sync across desktop, mobile, and web with zero device limits<br>• Official client support across Web, macOS, Windows, Linux, iOS, and Android<br>• Offline-first with auto-sync queue: write smoothly offline, automatically resume and sync when reconnected<br>• Standard SQLite database, lossless ZIP backup & Markdown export/import | • **Zero Server Cost for Life**: 100% runnable on Cloudflare Free tier (~150k short notes & ~50k images)<br>• **Flexible Docker Self-Hosting**: One-click deployment for VPS, NAS, or home server with millions of notes & instant sync<br>• Server-side brute-force protection and tenant security |
 
 ## Deployment
@@ -104,18 +108,16 @@ Copy the prompt below directly into an AI Agent (such as Codex, Claude, Cursor, 
 Deploy EdgeEver entirely through GitHub and Cloudflare:
 1. Fork https://github.com/tianma-if/edgeever.
 2. Create D1 `edgeever` and R2 `edgeever-resources` in Cloudflare.
-3. In Workers & Pages, create a Worker named `edgeever` from the Fork's `main` branch.
-   Use the repository root, keep Cloudflare's default Workers Builds deploy command,
-   and ensure its API token can read and edit D1. Select Save and Deploy.
-4. After the Worker is created, add the user's chosen password as the runtime Secret
-   `EDGE_EVER_AUTH_PASSWORD` (preferably at least 32 characters).
-   The username defaults to `admin`.
-   If the user specifies another, set `EDGE_EVER_AUTH_USERNAME` as a Workers Builds
-   variable before the next build.
-5. Run the build again, verify `/api/health` and `/api/openapi.json`, then log in
-   with that administrator username and password.
-6. Enable and manually run the GitHub Actions workflow named `Update deployed EdgeEver`
-   once so the Fork can automatically receive future stable releases and fixes.
+3. In Workers & Pages, select "Start with Hello World!" and create a Worker named `edgeever`.
+4. Add the user's chosen password as the runtime Secret `EDGE_EVER_AUTH_PASSWORD`
+   under Settings → Variables and Secrets, and deploy the Secret (preferably at least
+   32 characters). The username defaults to `admin`.
+5. Only after the Secret is deployed, open this Worker's Settings → Builds → Connect
+   and connect the Fork's `main` branch.
+6. In this Worker's Settings → Builds → API token, select or create the Cloudflare API token used for deployment, with D1 read/edit permission for the target account.
+7. In the Fork's GitHub repository, open Actions → Update deployed EdgeEver, enable the workflow if prompted, and select Run workflow on `main`. After confirming in Cloudflare that the corresponding build succeeded and deployment completed, verify `/api/health` and `/api/openapi.json`, then log in with the administrator
+   username and password.
+   This workflow will automatically sync future stable releases and fixes.
 ```
 
 > Detailed requirements: [AI Agent Cloudflare Deployment](docs/agent-deploy-cloudflare.md).
@@ -123,16 +125,17 @@ Deploy EdgeEver entirely through GitHub and Cloudflare:
 ### Option B: Manual Online Deployment
 
 <details>
-<summary>📖 Click to expand: 6-Step Web Manual Deployment Guide</summary>
+<summary>📖 Click to expand: 7-Step Web Manual Deployment Guide</summary>
 
-Complete setup in 6 web steps:
+Complete the following 7 web steps strictly in order:
 
 1. **Fork the Repository**: Click **Fork** at the top right of GitHub to fork EdgeEver into your personal account.
 2. **Create Cloudflare Resources**: Create D1 `edgeever` and R2 `edgeever-resources`.
-3. **Import & Configure the Project**: Create a Worker named `edgeever` from the Fork's `main` branch in Cloudflare **Workers & Pages**. Use the repository root and keep Cloudflare's default Workers Builds deploy command, which runs in Cloudflare. Ensure its API token can read and edit D1. The deploy command creates the bindings; do not edit Fork files.
-4. **Choose the Administrator Password**: Choose an administrator password, preferably at least 32 characters. Once the Worker is created, save it as the runtime Secret `EDGE_EVER_AUTH_PASSWORD`.
-5. **Build & Verify**: Save and Deploy creates the Worker and starts a build. The initial build primarily initializes the Worker instance; if it fails due to missing administrator Secret, this is expected behavior. Simply add the runtime Secret `EDGE_EVER_AUTH_PASSWORD` from Step 4 and click retry. The username defaults to `admin`; to use another, set `EDGE_EVER_AUTH_USERNAME` as a Workers Builds variable before retrying. Once deployed, confirm `/api/health` returns `200`, then log in with the configured username and password.
-6. **Enable Automatic Updates**: Open the Fork's **Actions** tab, click **I understand my workflows, go ahead and enable them**, then manually run **Update deployed EdgeEver** once so the Fork can automatically receive future stable releases and fixes.
+3. **Create the Worker**: In Cloudflare Workers & Pages, select Create application → Start with Hello World!, name the Worker `edgeever`, and deploy it. This creates a placeholder; EdgeEver is deployed in Step 7.
+4. **Set the Administrator Password**: Under the Worker’s Settings → Variables and Secrets, add `EDGE_EVER_AUTH_PASSWORD` as type Secret and click Deploy. Its value is your chosen login password, preferably at least 32 characters. Complete this before connecting the Fork.
+5. **Connect the Fork**: In the existing Worker’s Settings → Builds → Connect, select the Fork and production branch `main`.
+6. **Configure Deployment Permissions**: In this Worker's Settings → Builds → API token, select or create the Cloudflare API token used for deployment, with D1 read/edit permission for the target account.
+7. **Build & Verify**: In the Fork's GitHub repository, open Actions → Update deployed EdgeEver, enable the workflow if prompted, and select Run workflow on `main`. After confirming in Cloudflare that the corresponding build succeeded and deployment completed, confirm `/api/health` returns `200` and verify login. This workflow will automatically sync future stable releases and fixes.
 
 > 📖 For full step-by-step instructions and configuration details, see the [Online Deployment Guide](docs/deploy-cloudflare-button.md).
 
@@ -172,15 +175,13 @@ After installation, updates run automatically each day by default. To update man
 Whether for routine data backups, seamless cross-instance migration, or switching from existing note platforms, EdgeEver provides reliable, complete data mobility:
 
 - **EdgeEver Native Backup & Restore**: In the app, go to **Profile** -> **Import and export** to export or import an EdgeEver ZIP archive at any time. The extracted `notes/` directory keeps clean plaintext Markdown files and attachments for local archival or direct reading, while internal structured metadata enables lossless full restoration across different EdgeEver instances. Importing preserves existing unrelated data on the target instance and automatically overwrites records with matching IDs.
-- **Smooth Migration from Third-Party Apps**:
-  - **Evernote Migration**: Please refer to [docs/evernote-migration-guide.md](docs/evernote-migration-guide.md)
-  - **flomo Migration**: Please refer to [docs/flomo-migration-guide.md](docs/flomo-migration-guide.md)
-  - **Memos Migration**: Please refer to [docs/memos-migration-guide.md](docs/memos-migration-guide.md)
-  - **Notion Migration**: Please refer to [docs/notion-migration-guide.md](docs/notion-migration-guide.md)
+- **Smooth Migration from Third-Party Apps**: Whether importing via the native one-click GUI (supporting complete notes, hierarchies, and attachments from Evernote, Obsidian, and Joplin) or migrating from Notion, flomo, Memos, and other platforms via AI Agent & MCP, EdgeEver provides seamless, verified data mobility. See the [Third-Party Notes Migration Guide](docs/note-migration-guide.en-US.md).
 
 ### AI & MCP Protocol Integration
 
 Create an API token in **Profile** -> **API / MCP** and copy the Remote MCP configuration in one click to let AI Agents such as Claude Code, Cursor, Antigravity, and OpenClaw securely manage your knowledge base within account permissions. EdgeEver supports full CRUD for text notes, visual diagram notes (mind maps, flowcharts, and architecture diagrams), structured table notes, and native poster notes. Agents can also manage notebook hierarchies, tags, attachments, revision history, note templates, and AI instructions.
+
+For client setup, token access levels, troubleshooting and suggested rules for agents, see [Using EdgeEver with MCP clients](docs/mcp-guide.md).
 
 > 💡 **Inspiration:**
 > Make AI your true knowledge orchestrator and creative co-pilot—instantly turn concepts into interactive mind maps, flowcharts, architecture diagrams, and structured tables, while supplying private context to your AI Agents. Paired with EdgeEver’s powerful rich-text editing and elegant typography, AI-assisted content becomes beautifully structured, polished, and publication-ready knowledge assets.
@@ -194,7 +195,8 @@ The instance administrator can create, disable, or reset member accounts in **Pr
 ### Storage Extension & Third-Party Image Hosting
 
 - **OSS Object Storage**: The instance owner can configure S3-compatible object storage under **Settings → Advanced → OSS object storage**. Changing storage does not migrate or affect existing attachments.
-- **Desktop PicGo integration**: The desktop app can hand inserted images to a PicGo or PicList server on this computer or on another machine you trust, such as a NAS. That server uploads them to GitHub, SM.MS, Upyun, Qiniu, or a custom image host.
+- **Desktop PicGo integration**: The desktop app can hand inserted images to a PicGo or PicList server on this computer or on another machine you trust, such as a NAS. That server uploads them to GitHub, SM.MS, Upyun, Qiniu, or a custom image host. The address only needs to end with `/upload`, so a PicList behind a reverse proxy works too.
+- **Desktop CloudFlare ImgBed**: The desktop app can also upload inserted images straight to your self-hosted [CloudFlare ImgBed](https://github.com/MarSeventh/CloudFlare-ImgBed) with an API token. The upload folder accepts PicList-style placeholders such as `{Y}/{m}/{d}` and `{memoId}`.
 
 ### Plugins and Themes
 
@@ -285,7 +287,7 @@ Community contributions are warmly welcome! Please keep the following guidelines
 
 Welcome to the EdgeEver community, bringing together developers and creators exploring vibe coding and AI. Join us to discuss cutting-edge AI productivity and best practices for personal knowledge bases.
 
-👉 [Join the EdgeEver Telegram group](https://t.me/+wwUx1BYLrIdiZjY1)
+👉 [Join the EdgeEver Telegram group](https://t.me/+GvKYnL37feUwOTNl)
 
 ## Friendly Links
 
@@ -304,6 +306,7 @@ EdgeEver is a free and open-source project. Sustaining cross-platform client dev
 - The product design of mind-map and visual-diagram notes was informed by the publicly available product experiences of [XMind](https://xmind.com/) and [ProcessOn](https://www.processon.com/). These features were independently designed and implemented by EdgeEver.
 - EdgeEver's poster design workspace draws inspiration from [Qiaomu Design](https://github.com/joeseesun/qiaomu-cover-design) by 向阳乔木 (joeseesun), and adapts its templates and typography engine under the MIT license.
 - The visual themes and typography of EdgeEver's image-sharing cards were inspired by [Firefly Card (流光卡片)](https://fireflycard.shushiai.com/). Thank you for the design inspiration.
+- EdgeEver's one-click WeChat publishing and featured article typography draw inspiration from [gzh-design-skill](https://github.com/isjiamu/gzh-design-skill) by isjiamu. Thank you for the layout and design inspiration.
 
 ## Trademark and Brand Use
 
@@ -320,18 +323,21 @@ EdgeEver is self-hosted software. Except for official demo instances, project ma
 <!-- readme-contributors:start -->
 <p align="left">
   <a href="https://github.com/tianma-if"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/5895871?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@tianma-if" /></a>
+  <a href="https://github.com/dkoryto"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/2572180?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@dkoryto" /></a>
   <a href="https://github.com/sivdead"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/27731043?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@sivdead" /></a>
-  <a href="https://github.com/thorufur"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/55167?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@thorufur" /></a>
   <a href="https://github.com/yulei666"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/7358439?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@yulei666" /></a>
+  <a href="https://github.com/thorufur"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/55167?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@thorufur" /></a>
   <a href="https://github.com/arsaboo"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/18319734?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@arsaboo" /></a>
   <a href="https://github.com/alyyasser"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/16476111?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@alyyasser" /></a>
   <a href="https://github.com/MadlyFX"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/4896705?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@MadlyFX" /></a>
   <a href="https://github.com/claude"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/81847?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@claude" /></a>
   <a href="https://github.com/Crowszzz"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/75199133?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@Crowszzz" /></a>
+  <a href="https://github.com/CottonChou"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/17818375?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@CottonChou" /></a>
   <a href="https://github.com/Z-DDV"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/122068983?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@Z-DDV" /></a>
   <a href="https://github.com/0xfelixli"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/81979996?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@0xfelixli" /></a>
   <a href="https://github.com/Sergmay911"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/304439776?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@Sergmay911" /></a>
   <a href="https://github.com/X77seven"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/171017641?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@X77seven" /></a>
+  <a href="https://github.com/imgdown"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/348032096?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@imgdown" /></a>
   <a href="https://github.com/mookim-eth"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/97934198?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@mookim-eth" /></a>
   <a href="https://github.com/nzhdotme"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/9588882?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@nzhdotme" /></a>
   <a href="https://github.com/Shunamxiao"><img src="https://images.weserv.nl/?url=https://avatars.githubusercontent.com/u/92215296?v=4&h=96&w=96&fit=cover&mask=circle&maxage=7d" width="48" height="48" alt="@Shunamxiao" /></a>
